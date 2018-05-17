@@ -1,3 +1,4 @@
+// Package rpc support json-rpc
 package rpc
 
 import (
@@ -6,16 +7,26 @@ import (
 	"net"
 )
 
+// Clien is json-rpc Client
+// includes conn field
 type Client struct {
 	conn net.Conn
 }
 
-func (c *Client) Call() {
-
+// TODO: randId
+func randId() string {
+	return "rand_id"
 }
 
-func (c *Client) Go() {
-
+// Client Call Remote method
+func (c *Client) Call(id, method string, args, reply interface{}) error {
+	req := NewRequest(id, args, method)
+	bs := encodeRequest(req)
+	resp_s := c.Send(string(bs))
+	// print(resp_s)
+	resp := parseResponse(resp_s)
+	convert(resp.Result, reply)
+	return nil
 }
 
 func (c *Client) DialTCP(addr string) {
@@ -24,7 +35,7 @@ func (c *Client) DialTCP(addr string) {
 	if err != nil {
 		panic(err)
 	}
-	fmt.Println("Connect Ok")
+	// fmt.Println("Connect Ok")
 }
 
 func (c *Client) Send(s string) string {
