@@ -94,5 +94,5 @@ func main() {
 
 # result
 
-![server](#)
-![client](#)
+![server](https://raw.githubusercontent.com/yeqown/rpc/master/screenshot/server.png)
+![client](https://raw.githubusercontent.com/yeqown/rpc/master/screenshot/client.png)
