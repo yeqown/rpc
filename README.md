@@ -2,7 +2,14 @@
 
 remote procedure call over TCP, only support json-rpc 2.0.
 
-### TCP json-rpc Sample
+> Note: Currently, tests are inadequate 0.0, I'll do this quickly 
+
+### Doc
+
+ref to:
+[https://godoc.org/github.com/yeqown/rpc](https://godoc.org/github.com/yeqown/rpc)
+
+### Sample
 
 ```golang
 // test_client.go
