@@ -8,7 +8,6 @@ package rpc
 
 import (
 	"bufio"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -176,9 +175,8 @@ func isExportedOrBuiltinType(t reflect.Type) bool {
 // before Call must parse and decode param into reflect.Value
 // after Call must encode and response
 func (s *Server) call(req *Request) *Response {
-	// println("server call method-call", req.Method)
-	// split req.Method like "type.Method"
-	dot := strings.LastIndex(req.Method, ".")
+	// TODO: simplfy this function, or split into several functions
+	dot := strings.LastIndex(req.Method, ".") // split req.Method like "type.Method"
 	if dot < 0 {
 		err := errors.New("rpc: service/method request ill-formed: " + req.Method)
 		return NewResponse(req.ID, nil, NewJsonrpcErr(ParseErr, err.Error(), err))
@@ -230,19 +228,9 @@ func (s *Server) call(req *Request) *Response {
 	return svc.call(mtype, req, argv, replyv)
 }
 
-func convert(in interface{}, out interface{}) {
-	bs, err := json.Marshal(in)
-	if err != nil {
-		panic(err)
-	}
-	if err := json.Unmarshal(bs, out); err != nil {
-		panic(err)
-	}
-}
-
-// handleConn to recive a conn, parse Request and then transfer to call.
+// handleConn to recive a conn,
+// parse Request and then transfer to call.
 func (s *Server) handleConn(conn io.ReadWriteCloser) {
-	// buf := bufio.NewWriter(conn)
 	// receive
 	data, err := bufio.NewReader(conn).ReadString('\n')
 	if err != nil {
@@ -252,10 +240,8 @@ func (s *Server) handleConn(conn io.ReadWriteCloser) {
 
 	// parse request, must support multi request
 	reqs := parseRequest(data)
-	// println("parse done")
 	resps := make([]*Response, 0, MaxMultiRequest)
 
-	// println("calling")
 	// call method
 	if len(reqs) > 1 {
 		for _, req := range reqs {
@@ -270,7 +256,7 @@ func (s *Server) handleConn(conn io.ReadWriteCloser) {
 	}
 
 	// println("len of resp: ", len(resps))
-	// response
+	// response to clien
 	var resps_bs []byte
 	if len(resps) > 1 {
 		resps_bs = encodeMultiResponse(resps)
