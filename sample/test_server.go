@@ -2,6 +2,7 @@ package main
 
 import (
 	// "fmt"
+	"net/http"
 	"rpc"
 )
 
@@ -40,5 +41,8 @@ func main() {
 	s := rpc.NewServer()
 	mine_int := new(Int)
 	s.Register(mine_int)
-	s.HandleTCP("127.0.0.1:9999")
+	go s.HandleTCP("127.0.0.1:9999")
+
+	// to support http Request
+	http.ListenAndServe(":9998", s)
 }

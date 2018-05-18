@@ -1,6 +1,6 @@
 # rpc (json-rpc 2.0)
 
-remote procedure call over TCP, only support json-rpc 2.0.
+remote procedure call over TCP and HTTP(Post & json-body only), only support json-rpc 2.0.
 
 > Note: Currently, tests are inadequate 0.0, I'll do this quickly 
 
@@ -95,7 +95,10 @@ func main() {
 	s := rpc.NewServer()
 	mine_int := new(Int)
 	s.Register(mine_int)
-	s.HandleTCP("127.0.0.1:9999")
+	go s.HandleTCP("127.0.0.1:9999")
+
+	// to support http Request
+	http.ListenAndServe(":9998", s)
 }
 ```
 
@@ -103,3 +106,4 @@ func main() {
 
 ![server](https://raw.githubusercontent.com/yeqown/rpc/master/screenshot/server.png)
 ![client](https://raw.githubusercontent.com/yeqown/rpc/master/screenshot/client.png)
+![http-support](https://raw.githubusercontent.com/yeqown/rpc/master/screenshot/http-support.png)
