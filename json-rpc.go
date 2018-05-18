@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"encoding/json"
+	"errors"
 )
 
 const (
@@ -13,7 +14,7 @@ const (
 	MethodNotFound  = -32601 // -32601 找不到方法	该方法不存在或无效
 	InvalidParamErr = -32602 // -32602 无效的参数	无效的方法参数。
 	InternalErr     = -32603 // -32603 内部错误 JSON-RPC内部错误。
-	ServerErr       = -32000 // -32000 to -32099	Server error服务端错误	预留用于自定义的服务器错误。
+	ServerErr       = -32000 // -32000 to -32099	Server error服务端错误, 预留用于自定义的服务器错误。
 )
 
 var _messages = map[int]string{
@@ -74,9 +75,6 @@ func NewJsonrpcErr(code int, message string, data interface{}) *JsonrpcErr {
 	}
 }
 
-// MultiRequest
-type MultiRequest []*Request
-
 // Client send request to server,
 // and server also parse request into this
 type Request struct {
@@ -105,7 +103,7 @@ func encodeRequest(req *Request) []byte {
 }
 
 // encodeMultiRequest
-func encodeMultiRequest(reqs *MultiRequest) []byte {
+func encodeMultiRequest(reqs *[]*Request) []byte {
 	bs, err := json.Marshal(reqs)
 	if err != nil {
 		panic(err)
@@ -114,22 +112,23 @@ func encodeMultiRequest(reqs *MultiRequest) []byte {
 }
 
 // parseRequest parse request data string into request
-func parseRequest(s string) MultiRequest {
-	mr := make(MultiRequest, 0, MaxMultiRequest)
-	if err := json.Unmarshal([]byte(s), &mr); err != nil {
+func parseRequest(bs []byte) ([]*Request, error) {
+	mr := make([]*Request, 0, MaxMultiRequest)
+	if err := json.Unmarshal(bs, &mr); err != nil {
 		// println("ParseMultiReq err:", err.Error())
 		goto ParseSingleReq
 	}
-	return mr
+	return mr, nil
 
 ParseSingleReq:
 	r := new(Request)
-	if err := json.Unmarshal([]byte(s), r); err != nil {
-		println("ParseSingleReq err: ", err.Error())
-		return mr
+	if err := json.Unmarshal(bs, r); err != nil {
+		errmsg := "ParseSingleReq err: " + err.Error()
+		println(errmsg)
+		return mr, errors.New(errmsg)
 	}
 	mr = append(mr, r)
-	return mr
+	return mr, nil
 }
 
 // encodeRepsonse

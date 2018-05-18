@@ -8,11 +8,14 @@ package rpc
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"net"
+	"net/http"
 	"reflect"
 	"strings"
 	"sync"
@@ -20,7 +23,10 @@ import (
 	"unicode/utf8"
 )
 
-var typeOfError = reflect.TypeOf((*error)(nil)).Elem()
+var (
+	typeOfError  = reflect.TypeOf((*error)(nil)).Elem()
+	emptyBodyErr = errors.New("empty json body")
+)
 
 type methodType struct {
 	method    reflect.Method
@@ -231,15 +237,47 @@ func (s *Server) call(req *Request) *Response {
 // handleConn to recive a conn,
 // parse Request and then transfer to call.
 func (s *Server) handleConn(conn io.ReadWriteCloser) {
+	var resps_bs []byte
+
 	// receive
-	data, err := bufio.NewReader(conn).ReadString('\n')
+	data, err := bufio.NewReader(conn).ReadBytes('\n')
 	if err != nil {
-		fmt.Println("get an error:", err.Error())
+		errmsg := "reciving connection get an error:" + err.Error()
+		fmt.Println(errmsg)
+		resps_bs = encodeResponse(
+			NewResponse("", nil,
+				NewJsonrpcErr(ParseErr, errmsg, nil),
+			),
+		)
+		conn.Write(resps_bs)
 		return
 	}
 
 	// parse request, must support multi request
-	reqs := parseRequest(data)
+	reqs, err := parseRequest(data)
+	if err != nil {
+		resps_bs = encodeResponse(
+			NewResponse("", nil,
+				NewJsonrpcErr(ParseErr, err.Error(), nil),
+			),
+		)
+		conn.Write(resps_bs)
+		return
+	}
+
+	resps := s.handleWithRequests(reqs)
+	if len(resps) > 1 {
+		resps_bs = encodeMultiResponse(resps)
+	} else {
+		resps_bs = encodeResponse(resps[0])
+	}
+
+	println("response:", string(resps_bs))
+	resps_bs = append(resps_bs, byte('\n'))
+	conn.Write(resps_bs)
+}
+
+func (s *Server) handleWithRequests(reqs []*Request) []*Response {
 	resps := make([]*Response, 0, MaxMultiRequest)
 
 	// call method
@@ -249,23 +287,11 @@ func (s *Server) handleConn(conn io.ReadWriteCloser) {
 			resps = append(resps, resp)
 		}
 	} else {
-		// single req
 		req := reqs[0]
 		resp := s.call(req)
 		resps = append(resps, resp)
 	}
-
-	// println("len of resp: ", len(resps))
-	// response to clien
-	var resps_bs []byte
-	if len(resps) > 1 {
-		resps_bs = encodeMultiResponse(resps)
-	} else {
-		resps_bs = encodeResponse(resps[0])
-	}
-	println("response:", string(resps_bs))
-	resps_bs = append(resps_bs, byte('\n'))
-	conn.Write(resps_bs)
+	return resps
 }
 
 // Dealing with request
@@ -285,4 +311,70 @@ func (s *Server) HandleTCP(addr string) {
 		}
 		go s.handleConn(conn)
 	}
+}
+
+// Handle Request over HTTP
+// Inspired by `https://github.com/gorilla/rpc`
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	// valid request method
+	var resp *Response
+
+	w.Header().Set("Content-Type", "application/json")
+
+	if r.Method != http.MethodPost {
+		resp = NewResponse("", nil, NewJsonrpcErr(
+			http.StatusMethodNotAllowed, "HTTP request method must be POST", nil),
+		)
+		response(w, resp)
+		return
+	}
+	// parseJsonBody
+	reqs, err := getRequestFromBody(r)
+	if err != nil {
+		resp = NewResponse("", nil, NewJsonrpcErr(InternalErr, err.Error(), nil))
+		response(w, resp)
+		return
+	}
+
+	resps := s.handleWithRequests(reqs)
+
+	if len(resps) > 1 {
+		response(w, resps)
+	} else {
+		response(w, resps[0])
+	}
+	return
+}
+
+// response
+func response(w http.ResponseWriter, i interface{}) {
+	bs, err := json.Marshal(i)
+	if err != nil {
+		resp := NewResponse("", nil,
+			NewJsonrpcErr(InternalErr, err.Error(), nil),
+		)
+		bs, _ = json.Marshal(resp)
+	}
+	_, err = io.WriteString(w, string(bs))
+	if err != nil {
+		println("Send to client err:", err.Error())
+	}
+}
+
+// getRequestFromBody support parse request from jsonBody
+// and parse into Request
+func getRequestFromBody(req *http.Request) ([]*Request, error) {
+	var (
+		body []byte
+		err  error
+	)
+	if body, err = ioutil.ReadAll(req.Body); err != nil {
+		return nil, err
+	}
+	if len(body) == 0 {
+		return nil, emptyBodyErr
+	}
+	// parse []byte into Request
+	mReq, err := parseRequest(body)
+	return mReq, err
 }
