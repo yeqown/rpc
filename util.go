@@ -5,15 +5,18 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"math/rand"
+	"reflect"
 	"time"
 )
 
 const (
-	BaseStr  = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
-	ReqIdLen = 8
+	basestr  = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	lenReqID = 8
 )
 
-var LenOfBaseStr = len(BaseStr)
+var (
+	lenOfBasestr = len(basestr)
+)
 
 func strToMd5Hex(bs []byte) string {
 	m := md5.New()
@@ -22,22 +25,29 @@ func strToMd5Hex(bs []byte) string {
 }
 
 func randStr(length int) []byte {
-	bs := []byte(BaseStr)
+	bs := []byte(basestr)
 	result := make([]byte, 0, length)
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	for i := 0; i < length; i++ {
-		result = append(result, bs[r.Intn(LenOfBaseStr)])
+		result = append(result, bs[r.Intn(lenOfBasestr)])
 	}
 	return result
 }
 
 // rand request id(string) to send with Request
-func randId() string {
-	s := randStr(ReqIdLen)
+func randID() string {
+	s := randStr(lenReqID)
 	return strToMd5Hex(s)
 }
 
+// convert "in" to "out"
+// "in" json.Mashal then json.Unmashal to "out"
 func convert(in interface{}, out interface{}) {
+	typ := reflect.TypeOf(out)
+	if typ.Kind() != reflect.Ptr {
+		panic("convert function err: not ptr type of out, " + typ.Kind().String())
+	}
+
 	bs, err := json.Marshal(in)
 	if err != nil {
 		panic(err)
@@ -45,4 +55,8 @@ func convert(in interface{}, out interface{}) {
 	if err := json.Unmarshal(bs, out); err != nil {
 		panic(err)
 	}
+}
+
+func checkArrayOrSliceInterface(v interface{}) error {
+	return nil
 }

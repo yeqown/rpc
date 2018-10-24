@@ -25,7 +25,7 @@ import (
 
 var (
 	typeOfError  = reflect.TypeOf((*error)(nil)).Elem()
-	emptyBodyErr = errors.New("empty json body")
+	errEmptyBody = errors.New("empty json body")
 )
 
 type methodType struct {
@@ -58,19 +58,19 @@ func (s *service) call(mtype *methodType, req *Request, argv, replyv reflect.Val
 	return NewResponse(req.ID, replyv.Interface(), nil)
 }
 
-// want to save 'Type.Method' as key,
+// NewServer want to save 'Type.Method' as key,
 // `Method(Func type)` as value
 // type MethodMap map[string]*service
-
 func NewServer() *Server {
 	return &Server{}
 }
 
+// Server ...
 type Server struct {
 	m sync.Map // map[string]*service
 }
 
-// Parse register type and method
+// Register parse register type and method
 // maybe save into a Map, input value is a varible
 // want to got varible type name, and all Method Name
 func (s *Server) Register(rcvr interface{}) error {
@@ -81,15 +81,15 @@ func (s *Server) Register(rcvr interface{}) error {
 	sname := reflect.Indirect(_service.rcvr).Type().Name()
 
 	if sname == "" {
-		err_s := "rpc.Register: no service name for type " + _service.typ.String()
-		log.Print(err_s)
-		return errors.New(err_s)
+		errmsg := "rpc.Register: no service name for type " + _service.typ.String()
+		log.Print(errmsg)
+		return errors.New(errmsg)
 	}
 
 	if !isExported(sname) {
-		err_s := "rpc.Register: type " + sname + " is not exported"
-		log.Print(err_s)
-		return errors.New(err_s)
+		errmsg := "rpc.Register: type " + sname + " is not exported"
+		log.Print(errmsg)
+		return errors.New(errmsg)
 	}
 	_service.name = sname
 	_service.method = suitableMethods(_service.typ, true)
@@ -237,44 +237,44 @@ func (s *Server) call(req *Request) *Response {
 // handleConn to recive a conn,
 // parse Request and then transfer to call.
 func (s *Server) handleConn(conn io.ReadWriteCloser) {
-	var resps_bs []byte
+	var respsBytes []byte
 
 	// receive
 	data, err := bufio.NewReader(conn).ReadBytes('\n')
 	if err != nil {
 		errmsg := "reciving connection get an error:" + err.Error()
 		fmt.Println(errmsg)
-		resps_bs = encodeResponse(
+		respsBytes = encodeResponse(
 			NewResponse("", nil,
 				NewJsonrpcErr(ParseErr, errmsg, nil),
 			),
 		)
-		conn.Write(resps_bs)
+		conn.Write(respsBytes)
 		return
 	}
 
 	// parse request, must support multi request
 	reqs, err := parseRequest(data)
 	if err != nil {
-		resps_bs = encodeResponse(
+		respsBytes = encodeResponse(
 			NewResponse("", nil,
 				NewJsonrpcErr(ParseErr, err.Error(), nil),
 			),
 		)
-		conn.Write(resps_bs)
+		conn.Write(respsBytes)
 		return
 	}
 
 	resps := s.handleWithRequests(reqs)
 	if len(resps) > 1 {
-		resps_bs = encodeMultiResponse(resps)
+		respsBytes = encodeMultiResponse(resps)
 	} else {
-		resps_bs = encodeResponse(resps[0])
+		respsBytes = encodeResponse(resps[0])
 	}
 
-	println("response:", string(resps_bs))
-	resps_bs = append(resps_bs, byte('\n'))
-	conn.Write(resps_bs)
+	// println("response:", string(respsBytes))
+	respsBytes = append(respsBytes, byte('\n'))
+	conn.Write(respsBytes)
 }
 
 func (s *Server) handleWithRequests(reqs []*Request) []*Response {
@@ -294,10 +294,10 @@ func (s *Server) handleWithRequests(reqs []*Request) []*Response {
 	return resps
 }
 
-// Dealing with request
+// HandleTCP Dealing with request
 // decode and Call and response
 func (s *Server) HandleTCP(addr string) {
-	fmt.Println("start listening")
+	log.Println("RPC Server is listening")
 	l, err := net.Listen("tcp", addr)
 	if err != nil {
 		panic(err)
@@ -306,7 +306,7 @@ func (s *Server) HandleTCP(addr string) {
 	for {
 		conn, err := l.Accept()
 		if err != nil {
-			fmt.Println(err.Error())
+			log.Println(err.Error())
 			continue
 		}
 		go s.handleConn(conn)
@@ -372,7 +372,7 @@ func getRequestFromBody(req *http.Request) ([]*Request, error) {
 		return nil, err
 	}
 	if len(body) == 0 {
-		return nil, emptyBodyErr
+		return nil, errEmptyBody
 	}
 	// parse []byte into Request
 	mReq, err := parseRequest(body)
