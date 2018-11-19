@@ -86,7 +86,7 @@ func (c *Client) DialTCP(addr string) {
 	var err error
 	c.conn, err = net.Dial("tcp", addr)
 	if err != nil {
-		panic(err)
+		panic(fmt.Errorf("net.Dial tcp get err: %v", err))
 	}
 }
 

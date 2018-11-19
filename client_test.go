@@ -5,6 +5,9 @@ import (
 )
 
 func Test_Client(t *testing.T) {
+	s := NewServer()
+	go s.HandleTCP("127.0.0.1:9999")
+
 	c := NewClient()
-	c.DailHTTP("127.0.0.1:9999")
+	c.DialTCP("127.0.0.1:9999")
 }

@@ -6,5 +6,5 @@ import (
 
 func Test_Server(t *testing.T) {
 	s := NewServer()
-	s.HandleHTTP("127.0.0.1:9999")
+	s.HandleTCP("127.0.0.1:9999")
 }

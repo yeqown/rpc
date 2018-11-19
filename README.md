@@ -11,8 +11,8 @@ ref to:
 
 ### Sample Code
 
+link to [code](sample/server/client.go)
 ```golang
-// sample/client.go
 package main
 
 import (
@@ -114,8 +114,8 @@ func testMultyReply(c *rpc.Client) {
 
 ```
 
+link to [code](sample/server/server.go)
 ```golang
-// sample/client.go
 package main
 
 import (
