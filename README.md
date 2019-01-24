@@ -11,7 +11,7 @@ In distributed computing, a remote procedure call (RPC) is when a computer progr
 
 ## Documention
 
-reference to: [godoc](https://godoc.org/github.com/yeqown/rpc)
+reference to [godoc](https://godoc.org/github.com/yeqown/rpc)
 
 ## Examples
 

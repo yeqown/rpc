@@ -19,7 +19,7 @@ func Test_suitableMethods(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := suitableMethods(tt.args.typ, tt.args.reportErr); !reflect.DeepEqual(got, tt.want) {
+			if got := suitableMethods(tt.args.typ); !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("suitableMethods() = %v, want %v", got, tt.want)
 			}
 		})

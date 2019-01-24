@@ -8,8 +8,8 @@ type Int struct{}
 
 // Args ... for Sum Method
 type Args struct {
-	A int `json:"a"`
-	B int `json:"b"`
+	A int
+	B int
 }
 
 // Add ...

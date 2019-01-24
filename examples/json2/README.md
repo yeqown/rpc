@@ -1,4 +1,6 @@
-# RPC example
+# JSON RPC 2.0
+
+About [JSON-RPC 2.0 Specification](https://www.jsonrpc.org/specification)
 
 ## Server-side
 
@@ -8,14 +10,15 @@ package main
 
 import (
 	"github.com/yeqown/rpc"
+	"github.com/yeqown/rpc/json2"
 )
 
 type Int struct{}
 
 // Args ... for Sum Method
 type Args struct {
-	A int
-	B int
+	A int `json:"a"`
+	B int `json:"b"`
 }
 
 // Add ...
@@ -31,9 +34,8 @@ func (i *Int) Sum(args *Args, reply *int) error {
 }
 
 func main() {
-	srv := rpc.NewServerWithCodec("127.0.0.1:9999", nil)
+	srv := rpc.NewServerWithCodec("127.0.0.1:9999", json2.NewJSONCodec())
 	srv.RegisterName(new(Int), "Add")
-	// srv.Register(new(Int)) will register all exported methods.
 	srv.ServeTCP()
 }
 
@@ -47,19 +49,19 @@ package main
 
 import (
 	"fmt"
-	"reflect"
 
 	"github.com/yeqown/rpc"
+	"github.com/yeqown/rpc/json2"
 )
 
 // Args ...
 type Args struct {
-	A int
-	B int
+	A int `json:"a"`
+	B int `json:"b"`
 }
 
 func main() {
-	c := rpc.NewClient("127.0.0.1:9999")
+	c := rpc.NewClientWithCodec("127.0.0.1:9999", json2.NewJSONCodec())
 	testAdd(c)
 }
 

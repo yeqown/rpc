@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"reflect"
 
 	"github.com/yeqown/rpc"
 	"github.com/yeqown/rpc/json2"
@@ -21,16 +20,12 @@ func main() {
 
 func testAdd(c *rpc.Client) {
 	var (
-		sum     = 0
-		wantSum = 3
+		sum  int
+		args = &Args{A: 1, B: 222}
 	)
-	if err := c.Call("Int.Add", &Args{A: 1, B: 2}, &sum); err != nil {
+	if err := c.Call("Int.Add", args, &sum); err != nil {
 		println("got err: ", err.Error())
 	}
 
-	if !reflect.DeepEqual(sum, wantSum) {
-		println(fmt.Sprintf("Int.Add Result %d not equal to %d", sum, wantSum))
-		return
-	}
-	println("testAdd passed")
+	fmt.Printf("Int.Add(%d, %d) got %d, want: %d\n", args.A, args.B, sum, args.A+args.B)
 }

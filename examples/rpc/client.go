@@ -8,12 +8,12 @@ import (
 
 // Args ...
 type Args struct {
-	A int `json:"a"`
-	B int `json:"b"`
+	A int
+	B int
 }
 
 func main() {
-	c := rpc.NewClient("127.0.0.1:9999")
+	c := rpc.NewClientWithCodec("127.0.0.1:9999", nil)
 	testAdd(c)
 }
 

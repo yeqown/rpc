@@ -6,33 +6,21 @@ import (
 	"net"
 )
 
-// ArgsEncodeFunc ...
-// type ArgsEncodeFunc func(args interface{}) ([]byte, error)
-
 var (
 	errMultiReplyTypePtr = errors.New("multi reply should be arrry or slice pointer")
 	errEmptyCodec        = errors.New("client has an empty codec")
-	argsEncodeFunc       = defaultArgsEncodeFunc
 )
 
-// TODO: finish this
-func defaultArgsEncodeFunc() ([]byte, error) {
-	return nil, nil
-}
-
-// NewClient ... maybe noneed this function
-func NewClient(addr string) *Client {
-	return &Client{
-		addr:  addr,
-		codec: newGobCodec(),
+// NewClientWithCodec generate a Client, if codec is nil will
+// use default gobCodec
+func NewClientWithCodec(addr string, codec Codec) *Client {
+	if codec == nil {
+		codec = newGobCodec()
 	}
-}
 
-// NewClientWithCodec ...
-func NewClientWithCodec(addr string, c Codec) *Client {
 	return &Client{
 		addr:  addr,
-		codec: c,
+		codec: codec,
 	}
 }
 
@@ -87,44 +75,3 @@ func (c *Client) Close() {
 	}
 	c.conn.Close()
 }
-
-// CallMulti ...
-// TODO: handle with multi params and multi response? and how
-// func (c *Client) CallMulti(method string, params, replys interface{}) error {
-// 	ele := reflect.ValueOf(params)
-// 	typ := reflect.TypeOf(params)
-
-// 	if typ.Kind() == reflect.Ptr {
-// 		ele = ele.Elem()
-// 		typ = ele.Type()
-// 	}
-
-// 	if typ.Kind() != reflect.Slice && typ.Kind() != reflect.Array {
-// 		err := fmt.Errorf("Error: params type %s is not array type or slice", typ.Kind().String())
-// 		return err
-// 	}
-
-// 	reqs := make([]*Request, 0)
-// 	for i := 0; i < ele.Len(); i++ {
-// 		reqs = append(reqs,
-// 			NewRequest(randID(), ele.Index(i).Interface(), method))
-// 	}
-// 	bs := encodeMultiRequest(reqs)
-// 	defer c.conn.Close()
-// 	respStr := c.send(string(bs))
-// 	resps := parseMultiResponse(respStr)
-
-// 	// replys must be pointer, so it can be set this
-// 	eleReply := reflect.ValueOf(replys)
-// 	typReply := reflect.TypeOf(replys)
-// 	if typReply.Kind() != reflect.Ptr {
-// 		return errMultiReplyTypePtr
-// 	}
-
-// 	eleReply = eleReply.Elem()
-// 	// fill response.Result into replys
-// 	for idx, resp := range resps {
-// 		convert(resp.Result, eleReply.Index(idx).Interface())
-// 	}
-// 	return nil
-// }
