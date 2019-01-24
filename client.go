@@ -48,7 +48,8 @@ func (c *Client) Call(method string, args, reply interface{}) error {
 	}
 
 	// core ....
-	respDataByts, err := c.codec.Request(c.conn, method, args)
+	req := c.codec.Request(method, args)
+	respDataByts, err := WriteClientTCP(c.conn, c.codec, req)
 	if err != nil {
 		return fmt.Errorf("c.codec.Request(c.conn, req) got err: %v", err)
 	}

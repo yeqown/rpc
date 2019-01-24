@@ -34,7 +34,7 @@ func WriteClientTCP(conn net.Conn, codec Codec, req Request) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	debugF("send data: %v and encoded to be: %v", req, data)
+	// debugF("send data: %v and encoded to be: %v", req, data)
 
 	// add spliter symbol
 	data = append(data, '\n')

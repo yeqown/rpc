@@ -5,7 +5,6 @@ import (
 	"encoding/base64"
 	"encoding/gob"
 	"fmt"
-	"net"
 )
 
 var (
@@ -19,10 +18,10 @@ type Codec interface {
 	Encode(argv interface{}) ([]byte, error)
 	Decode(data []byte, argv interface{}) error
 
-	Response(conn net.Conn, req Request, reply []byte, err error) error
+	Response(req Request, reply []byte, errcode int) Response
 	ParseResponse(respBody []byte) (Response, error)
 
-	Request(conn net.Conn, method string, argv interface{}) ([]byte, error)
+	Request(method string, argv interface{}) Request
 	ParseRequest(data []byte) (Request, error)
 }
 
@@ -82,22 +81,22 @@ func (g *gobCodec) Decode(data []byte, out interface{}) error {
 }
 
 // Response ...
-func (g *gobCodec) Response(conn net.Conn, req Request, reply []byte, err error) error {
+func (g *gobCodec) Response(req Request, reply []byte, errcode int) Response {
 	resp := new(defaultResponse)
-	if err != nil {
-		resp.Err = err.Error()
+	if errcode != SUCCESS {
+		resp.Err = errcodeMap[errcode].Error()
 	} else {
 		resp.Rply = reply
 	}
 
-	return WriteServerTCP(conn, g, resp)
+	return resp
 }
 
 // Request ...
-func (g *gobCodec) Request(conn net.Conn, method string, argv interface{}) ([]byte, error) {
+func (g *gobCodec) Request(method string, argv interface{}) Request {
 	byts, err := g.Encode(argv)
 	if err != nil {
-		return nil, err
+		panic(err)
 	}
 
 	req := &defaultRequest{
@@ -105,7 +104,7 @@ func (g *gobCodec) Request(conn net.Conn, method string, argv interface{}) ([]by
 		Args: byts,
 	}
 
-	return WriteClientTCP(conn, g, req)
+	return req
 }
 
 // ParseRequest ...

@@ -2,9 +2,12 @@ package rpc
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
+	"io"
 	"log"
 	"net"
+	"net/http"
 	"reflect"
 	"strings"
 	"sync"
@@ -105,9 +108,7 @@ func (s *Server) call(req Request) Response {
 
 	dot := strings.LastIndex(reqMethod, ".") // split req.Method like "type.Method"
 	if dot < 0 {
-		return &defaultResponse{
-			Err: "rpc: service/method request ill-formed: " + reqMethod,
-		}
+		return &defaultResponse{Err: "rpc: service/method request ill-formed: " + reqMethod, Errcode: InvalidRequest}
 	}
 
 	serviceName := reqMethod[:dot]
@@ -116,16 +117,12 @@ func (s *Server) call(req Request) Response {
 	// method existed or not
 	svci, ok := s.m.Load(serviceName)
 	if !ok {
-		return &defaultResponse{
-			Err: "rpc: can't find service " + reqMethod,
-		}
+		return &defaultResponse{Err: "rpc: can't find service " + reqMethod, Errcode: MethodNotFound}
 	}
 	svc := svci.(*service)
 	mtype := svc.method[methodName]
 	if mtype == nil {
-		return &defaultResponse{
-			Err: "rpc: can't find method " + reqMethod,
-		}
+		return &defaultResponse{Err: "rpc: can't find method " + reqMethod, Errcode: MethodNotFound}
 	}
 
 	// to prepare argv and replyv in reflect.Value
@@ -146,7 +143,7 @@ func (s *Server) call(req Request) Response {
 
 	if err := s.codec.Decode(req.Params(), argv.Interface()); err != nil {
 		debugF("decode params err: %v", err)
-		return &defaultResponse{Err: err.Error()}
+		return &defaultResponse{Err: err.Error(), Errcode: InvalidParamErr}
 	}
 	// convert(req.Params, argv.Interface())
 	// fmt.Println(argv.Interface())
@@ -160,14 +157,14 @@ func (s *Server) call(req Request) Response {
 	}
 
 	if err := svc.call(mtype, argv, replyv); err != nil {
-		return &defaultResponse{Err: err.Error()}
+		return &defaultResponse{Err: err.Error(), Errcode: InternalErr}
 	}
 
 	byts, err := s.codec.Encode(replyv.Interface())
 	if err != nil {
-		return &defaultResponse{Err: err.Error()}
+		return &defaultResponse{Err: err.Error(), Errcode: InternalErr}
 	}
-	return &defaultResponse{Err: "", Rply: byts}
+	return &defaultResponse{Err: "", Rply: byts, Errcode: SUCCESS}
 }
 
 // handleConn to recive a conn,
@@ -175,49 +172,38 @@ func (s *Server) call(req Request) Response {
 func (s *Server) handleConn(conn net.Conn) {
 	// receive a request
 	data, err := bufio.NewReader(conn).ReadBytes('\n')
-	debugF("recv a new request: %v", data)
+	// debugF("recv a new request: %v", data)
 
 	if err != nil {
 		debugF("response to client connection err: %v", err)
-		s.codec.Response(conn, nil, nil, err)
+		resp := s.codec.Response(nil, nil, InternalErr)
+		WriteServerTCP(conn, s.codec, resp)
 		return
 	}
 
 	req, err := s.codec.ParseRequest(data)
 	if err := s.codec.Decode(data, req); err != nil {
 		debugF("server decode request err: %v", err)
-		s.codec.Response(conn, nil, nil, err)
+		resp := s.codec.Response(nil, nil, InvalidParamErr)
+		WriteServerTCP(conn, s.codec, resp)
 		return
 	}
+	debugF("recv a new request: %v", req)
 
 	// hanlde multi request
 	if req.CanIter() {
 		req.Iter(func(req Request) {
-			resp := s.call(req)
-			s.codec.Response(conn, req, resp.Reply(), resp.Error())
+			r := s.call(req)
+			r2 := s.codec.Response(req, r.Reply(), r.ErrCode())
+			WriteServerTCP(conn, s.codec, r2)
 		})
 		return
 	}
 
-	resp := s.call(req)
-	s.codec.Response(conn, req, resp.Reply(), resp.Error())
+	r := s.call(req)
+	r2 := s.codec.Response(req, r.Reply(), r.ErrCode())
+	WriteServerTCP(conn, s.codec, r2)
 }
-
-// func (s *Server) handleWithRequests(reqs []*Request) []*Response {
-// 	resps := make([]*Response, 0, MaxMultiRequest)
-// 	// call method
-// 	if len(reqs) > 1 {
-// 		for _, req := range reqs {
-// 			resp := s.call(req)
-// 			resps = append(resps, resp)
-// 		}
-// 	} else {
-// 		req := reqs[0]
-// 		resp := s.call(req)
-// 		resps = append(resps, resp)
-// 	}
-// 	return resps
-// }
 
 // ServeTCP Dealing with request
 // decode and Call and response
@@ -241,53 +227,41 @@ func (s *Server) ServeTCP() {
 	}
 }
 
-// Handle Request over HTTP
-// Inspired by `https://github.com/gorilla/rpc`
-// func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-// 	// valid request method
-// 	var resp *Response
+// handle request over HTTP
+// inspired by `https://github.com/gorilla/rpc`
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	defer func() {
+		v := recover()
+		if err, ok := v.(error); ok && err != nil {
+			log.Printf("%v", err)
+		}
+	}()
 
-// 	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", "application/json")
 
-// 	if r.Method != http.MethodPost {
-// 		resp = NewResponse("", nil, NewJsonrpcErr(
-// 			http.StatusMethodNotAllowed, "HTTP request method must be POST", nil),
-// 		)
-// 		response(w, resp)
-// 		return
-// 	}
-// 	// parseJsonBody
-// 	reqs, err := getRequestFromBody(r)
-// 	if err != nil {
-// 		resp = NewResponse("", nil, NewJsonrpcErr(InternalErr, err.Error(), nil))
-// 		response(w, resp)
-// 		return
-// 	}
+	if r.Method != http.MethodPost {
+		s.codec.Response(nil, nil, MethodNotFound)
+		return
+	}
 
-// 	resps := s.handleWithRequests(reqs)
+	// resps := s.handleWithRequests(reqs)
+	return
+}
 
-// 	if len(resps) > 1 {
-// 		response(w, resps)
-// 	} else {
-// 		response(w, resps[0])
-// 	}
-// 	return
-// }
+// responseHTTP
+func responseHTTP(w http.ResponseWriter, v interface{}) {
+	var (
+		byts []byte
+		err  error
+	)
 
-// response
-// func response(w http.ResponseWriter, i interface{}) {
-// 	bs, err := json.Marshal(i)
-// 	if err != nil {
-// 		resp := NewResponse("", nil,
-// 			NewJsonrpcErr(InternalErr, err.Error(), nil),
-// 		)
-// 		bs, _ = json.Marshal(resp)
-// 	}
-// 	_, err = io.WriteString(w, string(bs))
-// 	if err != nil {
-// 		println("Send to client err:", err.Error())
-// 	}
-// }
+	if byts, err = json.Marshal(v); err != nil {
+		panic(err)
+	}
+	if _, err = io.WriteString(w, string(byts)); err != nil {
+		panic(err)
+	}
+}
 
 // getRequestFromBody support parse request from jsonBody
 // and parse into Request

@@ -1,23 +1,18 @@
 package json2
 
+import (
+	"github.com/yeqown/rpc"
+)
+
 const (
 	// VERSIONCODE const version code of JSONRPC
 	VERSIONCODE = "2.0"
-
-	MaxMultiRequest = 10     // MaxMultiRequest count
-	ParseErr        = -32700 // ParseErr -32700 语法解析错误,服务端接收到无效的json。该错误发送于服务器尝试解析json文本
-	InvalidRequest  = -32600 // InvalidRequest -32600 无效请求发送的json不是一个有效的请求对象。
-	MethodNotFound  = -32601 // MethodNotFound -32601 找不到方法 该方法不存在或无效
-	InvalidParamErr = -32602 // InvalidParamErr -32602 无效的参数 无效的方法参数。
-	InternalErr     = -32603 // InternalErr -32603 内部错误 JSON-RPC内部错误。
-	ServerErr       = -32000 // ServerErr -32000 to -32099 Server error服务端错误, 预留用于自定义的服务器错误。
 )
 
-var messages = map[int]string{
-	ParseErr:        "ParseErr",
-	InvalidRequest:  "InvalidRequest",
-	MethodNotFound:  "MethodNotFound",
-	InvalidParamErr: "InvalidParamErr",
-	InternalErr:     "InternalErr",
-	ServerErr:       "ServerErr",
+var errcodeMap = map[int]*jsonError{
+	rpc.ParseErr:        &jsonError{rpc.ParseErr, "ParseErr", nil},
+	rpc.InvalidRequest:  &jsonError{rpc.InvalidRequest, "InvalidRequest", nil},
+	rpc.MethodNotFound:  &jsonError{rpc.MethodNotFound, "MethodNotFound", nil},
+	rpc.InvalidParamErr: &jsonError{rpc.InvalidParamErr, "InvalidParamErr", nil},
+	rpc.InternalErr:     &jsonError{rpc.InternalErr, "InternalErr", nil},
 }

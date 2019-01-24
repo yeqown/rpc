@@ -32,6 +32,9 @@ type Response interface {
 	// if there is no any error happend, should return nil
 	Error() error
 
+	// ErrorCode to return errcode(int) if ok return SUCCESS(0)
+	ErrCode() int
+
 	// Reply means all ([]byte) data contains response body
 	// all these response data (interface{} type)
 	// should be result of codec encoded
@@ -47,29 +50,15 @@ type defaultRequest struct {
 	Args []byte
 }
 
-func (d *defaultRequest) Method() string {
-	return d.Mthd
-}
-
-func (d *defaultRequest) Params() []byte {
-	return d.Args
-}
-
-func (d *defaultRequest) CanIter() bool {
-	return false
-}
-
-func (d *defaultRequest) Iter(iterFunc func(req Request)) {
-	return
-}
+func (d *defaultRequest) Method() string                  { return d.Mthd }
+func (d *defaultRequest) Params() []byte                  { return d.Args }
+func (d *defaultRequest) CanIter() bool                   { return false }
+func (d *defaultRequest) Iter(iterFunc func(req Request)) { return }
 
 type defaultResponse struct {
-
-	// Rply ...
-	Rply []byte
-
-	// Err ...
-	Err string
+	Rply    []byte
+	Err     string
+	Errcode int
 }
 
 func (d *defaultResponse) Error() error {
@@ -79,6 +68,5 @@ func (d *defaultResponse) Error() error {
 	return errors.New(d.Err)
 }
 
-func (d *defaultResponse) Reply() []byte {
-	return d.Rply
-}
+func (d *defaultResponse) Reply() []byte { return d.Rply }
+func (d *defaultResponse) ErrCode() int  { return d.Errcode }
