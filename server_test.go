@@ -20,7 +20,7 @@ func (i *Int) Sum(args *Args, reply *int) error {
 
 func TestServer_call(t *testing.T) {
 	codec := newGobCodec()
-	s := NewServerWithCodec("172.168.0.1:9999", codec)
+	s := NewServerWithCodec(codec)
 	s.Register(new(Int))
 
 	argv, _ := codec.Encode(&Args{A: 222, B: 333})

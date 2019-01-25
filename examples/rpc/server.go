@@ -25,7 +25,7 @@ func (i *Int) Sum(args *Args, reply *int) error {
 }
 
 func main() {
-	srv := rpc.NewServerWithCodec("127.0.0.1:9999", nil)
+	srv := rpc.NewServerWithCodec(nil)
 	srv.RegisterName(new(Int), "Add")
-	srv.ServeTCP()
+	srv.Start("127.0.0.1:9998", "127.0.0.1:9999")
 }

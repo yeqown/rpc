@@ -6,12 +6,78 @@ In distributed computing, a remote procedure call (RPC) is when a computer progr
 
 * [x] Codec feature.
 * [x] RPC implemention over TCP.
+* [x] RPC implemention over HTTP.
 * [ ] JSON RPC(v2) implemention over TCP and HTTP.
 * [ ] more test cases.
 
 ## Documention
 
-reference to [godoc](https://godoc.org/github.com/yeqown/rpc)
+### 1. all API reference to [godoc](https://godoc.org/github.com/yeqown/rpc)
+
+### 2. Usage over TCP:
+
+#### 2.1 server side
+
+```go
+func main() {
+	srv := rpc.NewServerWithCodec(nil)
+	// srv.Register(new(Int)) will register all exported methods of type `Int`
+	srv.RegisterName(new(Int), "Add")
+	// srv.Start(tcpAddr, httpAddr) will serve both TCP and HTTP
+	srv.ServeTCP(tcpAddr)
+}
+```
+
+#### 2.2 client side
+
+```go
+
+func main() {
+	c := rpc.NewClientWithCodec(nil, "127.0.0.1:9998", "")
+	var (
+		sum  int
+		args = &Args{A: 1, B: 222}
+	)
+	if err := c.Call("Int.Add", args, &sum); err != nil {
+		println("got err: ", err.Error())
+	}
+
+	fmt.Printf("[TCP] Int.Add(%d, %d) got %d, want: %d\n", args.A, args.B, sum, args.A+args.B)
+}
+```
+
+### 3. Usage over HTTP:
+
+#### 3.1 server side
+
+```go
+func main() {
+	srv := rpc.NewServerWithCodec(nil)
+	// srv.Register(new(Int)) will register all exported methods of type `Int`
+	srv.RegisterName(new(Int), "Add")
+	srv.ListenAndServe(httpAddr)
+	// srv.Start(tcpAddr, httpAddr) will serve both TCP and HTTP
+}
+```
+
+#### 3.2 client side
+
+```go
+func main() {
+	// prototype rpc.NewClientWithCodec(codec Codec, tcpAddr string, httpAddr string)
+	// if codec is nil will use default gobCodec, tcpAddr or httpAddr is empty only when
+	// you are sure about it will never be used, otherwise it panic while using some functions.
+	c := rpc.NewClientWithCodec(nil, "", "127.0.0.1:9999")
+	var (
+		sum  int
+		args = &Args{A: 1111, B: 222}
+	)
+	if err := c.CallHTTP("Int.Add", args, &sum); err != nil {
+		println("got err: ", err.Error())
+	}
+	fmt.Printf("[HTTP] Int.Add(%d, %d) got %d, want: %d\n", args.A, args.B, sum, args.A+args.B)
+}
+```
 
 ## Examples
 

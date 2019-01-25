@@ -34,11 +34,10 @@ func (i *Int) Sum(args *Args, reply *int) error {
 }
 
 func main() {
-	srv := rpc.NewServerWithCodec("127.0.0.1:9999", json2.NewJSONCodec())
-	srv.RegisterName(new(Int), "Add")
-	srv.ServeTCP()
+	srv := rpc.NewServerWithCodec(json2.NewJSONCodec())
+	srv.Register(new(Int))
+	srv.Start("127.0.0.1:9998", "127.0.0.1:9999")
 }
-
 ```
 
 ## Client-side
@@ -61,11 +60,12 @@ type Args struct {
 }
 
 func main() {
-	c := rpc.NewClientWithCodec("127.0.0.1:9999", json2.NewJSONCodec())
-	testAdd(c)
+	c := rpc.NewClientWithCodec(json2.NewJSONCodec(), "127.0.0.1:9998", "127.0.0.1:9999")
+	testAddOverTCP(c)
+	testAddOverHTTP(c)
 }
 
-func testAdd(c *rpc.Client) {
+func testAddOverTCP(c *rpc.Client) {
 	var (
 		sum  int
 		args = &Args{A: 1, B: 222}
@@ -74,12 +74,29 @@ func testAdd(c *rpc.Client) {
 		println("got err: ", err.Error())
 	}
 
-	fmt.Printf("Int.Add(%d, %d) got %d, want: %d\n", args.A, args.B, sum, args.A+args.B)
+	fmt.Printf("[TCP] Int.Add(%d, %d) got %d, want: %d\n", args.A, args.B, sum, args.A+args.B)
+}
+
+func testAddOverHTTP(c *rpc.Client) {
+	var (
+		sum  int
+		args = &Args{A: 12312, B: 8712}
+	)
+	if err := c.CallHTTP("Int.Sum", args, &sum); err != nil {
+		println("got err: ", err.Error())
+	}
+
+	fmt.Printf("[HTTP] Int.Sum(%d, %d) got %d, want: %d\n", args.A, args.B, sum, args.A+args.B)
 }
 ```
 
 ## Output
 
 ```sh
-Int.Add(1, 222) got 223, want: 223
+got err:  resp.Error(): <nil>
+[TCP] Int.Add(1, 222) got 0, want: 223
+2019/01/25 11:22:27 [debug]: send request [addr: 127.0.0.1:9999] [data: eyJpZCI6ImNlYjhjYmMyM2JiYWFlZTQ5Zjg2YWJiOGI3Yjc0M2ZhIiwibWV0aG9kIjoiSW50LlN1bSIsInBhcmFtcyI6IlpYbEthRWxxYjNoTmFrMTRUV2wzYVZscFNUWlBSR040VFc0d1BRPT0iLCJqc29ucnBjIjoiMi4wIn0=]
+2019/01/25 11:22:27 [debug]: got response eyJScGx5IjoiVFdwRmQwMXFVVDA9IiwiRXJyIjoiIiwiRXJyY29kZSI6MH0=
+got err:  rpcResp.Error(): <nil>
+[HTTP] Int.Sum(12312, 8712) got 0, want: 21024
 ```

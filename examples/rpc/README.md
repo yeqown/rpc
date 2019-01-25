@@ -31,12 +31,10 @@ func (i *Int) Sum(args *Args, reply *int) error {
 }
 
 func main() {
-	srv := rpc.NewServerWithCodec("127.0.0.1:9999", nil)
+	srv := rpc.NewServerWithCodec(nil)
 	srv.RegisterName(new(Int), "Add")
-	// srv.Register(new(Int)) will register all exported methods.
-	srv.ServeTCP()
+	srv.Start("127.0.0.1:9998", "127.0.0.1:9999")
 }
-
 ```
 
 ## Client-side
@@ -47,7 +45,6 @@ package main
 
 import (
 	"fmt"
-	"reflect"
 
 	"github.com/yeqown/rpc"
 )
@@ -59,11 +56,12 @@ type Args struct {
 }
 
 func main() {
-	c := rpc.NewClient("127.0.0.1:9999")
-	testAdd(c)
+	c := rpc.NewClientWithCodec(nil, "127.0.0.1:9998", "127.0.0.1:9999")
+	testAddOverTCP(c)
+	testAddOverHTTP(c)
 }
 
-func testAdd(c *rpc.Client) {
+func testAddOverTCP(c *rpc.Client) {
 	var (
 		sum  int
 		args = &Args{A: 1, B: 222}
@@ -72,12 +70,28 @@ func testAdd(c *rpc.Client) {
 		println("got err: ", err.Error())
 	}
 
-	fmt.Printf("Int.Add(%d, %d) got %d, want: %d\n", args.A, args.B, sum, args.A+args.B)
+	fmt.Printf("[TCP] Int.Add(%d, %d) got %d, want: %d\n", args.A, args.B, sum, args.A+args.B)
 }
+
+func testAddOverHTTP(c *rpc.Client) {
+	var (
+		sum  int
+		args = &Args{A: 1111, B: 222}
+	)
+	if err := c.CallHTTP("Int.Add", args, &sum); err != nil {
+		println("got err: ", err.Error())
+	}
+
+	fmt.Printf("[HTTP] Int.Add(%d, %d) got %d, want: %d\n", args.A, args.B, sum, args.A+args.B)
+}
+
 ```
 
 ## Output
 
 ```sh
-Int.Add(1, 222) got 223, want: 223
+[TCP] Int.Add(1, 222) got 223, want: 223
+2019/01/25 11:17:56 [debug]: send request [addr: 127.0.0.1:9999] [data: Lv+DAwEBDmRlZmF1bHRSZXF1ZXN0Af+EAAECAQRNdGhkAQwAAQRBcmdzAQoAAABK/4QBB0ludC5BZGQBPEh2K0JBd0VCQkVGeVozTUIvNElBQVFJQkFVRUJCQUFCQVVJQkJBQUFBQXYvZ2dIK0NLNEIvZ0c4QUE9PQA=]
+2019/01/25 11:17:56 [debug]: got response Ov+BAwEBD2RlZmF1bHRSZXNwb25zZQH/ggABAwEEUnBseQEKAAEDRXJyAQwAAQdFcnJjb2RlAQQAAAAN/4IBCEJRUUEvZ3BxAA==
+[HTTP] Int.Add(1111, 222) got 1333, want: 1333
 ```

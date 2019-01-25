@@ -26,7 +26,7 @@ func (i *Int) Sum(args *Args, reply *int) error {
 }
 
 func main() {
-	srv := rpc.NewServerWithCodec("127.0.0.1:9999", json2.NewJSONCodec())
-	srv.RegisterName(new(Int), "Add")
-	srv.ServeTCP()
+	srv := rpc.NewServerWithCodec(json2.NewJSONCodec())
+	srv.Register(new(Int))
+	srv.Start("127.0.0.1:9998", "127.0.0.1:9999")
 }

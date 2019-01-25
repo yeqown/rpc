@@ -2,15 +2,16 @@ package rpc
 
 import (
 	"bufio"
-	"encoding/json"
 	"errors"
-	"io"
 	"log"
 	"net"
 	"net/http"
 	"reflect"
 	"strings"
 	"sync"
+	"time"
+
+	"github.com/yeqown/rpc/utils"
 )
 
 var (
@@ -20,19 +21,15 @@ var (
 
 // NewServerWithCodec generate a server to handle all
 // tcp request from rpc client, if codec is nil will use default gobCodec
-func NewServerWithCodec(addr string, codec Codec) *Server {
+func NewServerWithCodec(codec Codec) *Server {
 	if codec == nil {
 		codec = newGobCodec()
 	}
-	return &Server{
-		addr:  addr,
-		codec: codec,
-	}
+	return &Server{codec: codec}
 }
 
 // Server data struct to serve RPC request over TCP and HTTP
 type Server struct {
-	addr  string   // addr to tcp listen on
 	m     sync.Map // map[string]*service
 	codec Codec    // codec to read request and writeResponse
 }
@@ -177,7 +174,7 @@ func (s *Server) handleConn(conn net.Conn) {
 	if err != nil {
 		debugF("response to client connection err: %v", err)
 		resp := s.codec.Response(nil, nil, InternalErr)
-		WriteServerTCP(conn, s.codec, resp)
+		utils.WriteServerTCP(conn, encodeResponse(s.codec, resp))
 		return
 	}
 
@@ -185,33 +182,50 @@ func (s *Server) handleConn(conn net.Conn) {
 	if err := s.codec.Decode(data, req); err != nil {
 		debugF("server decode request err: %v", err)
 		resp := s.codec.Response(nil, nil, InvalidParamErr)
-		WriteServerTCP(conn, s.codec, resp)
+		utils.WriteServerTCP(conn, encodeResponse(s.codec, resp))
 		return
 	}
-	debugF("recv a new request: %v", req)
+	debugF("[TCP] recv a new request: %s", req)
 
 	// hanlde multi request
 	if req.CanIter() {
 		req.Iter(func(req Request) {
 			r := s.call(req)
 			r2 := s.codec.Response(req, r.Reply(), r.ErrCode())
-			WriteServerTCP(conn, s.codec, r2)
+			utils.WriteServerTCP(conn, encodeResponse(s.codec, r2))
 		})
 		return
 	}
 
 	r := s.call(req)
 	r2 := s.codec.Response(req, r.Reply(), r.ErrCode())
-	WriteServerTCP(conn, s.codec, r2)
+	utils.WriteServerTCP(conn, encodeResponse(s.codec, r2))
+}
+
+// Start open tcp and http to serve request,
+// open or not depends on that is addr an empty string,
+// you can also open tcp by s.ServeTCP(addr), at the same time
+// open http by s.ListenAndServe(addr)
+func (s *Server) Start(tcpAddr, httpAddr string) {
+	wait := make(chan bool)
+	if httpAddr != "" {
+		go s.ListenAndServe(httpAddr)
+	}
+
+	if tcpAddr != "" {
+		go s.ServeTCP(tcpAddr)
+	}
+
+	<-wait
 }
 
 // ServeTCP Dealing with request
 // decode and Call and response
-func (s *Server) ServeTCP() {
-	debugF("RPC Server is listening: %s", s.addr)
+func (s *Server) ServeTCP(addr string) {
+	debugF("RPC server over TCP is listening: %s", addr)
 
 	// make a listener over TCP
-	listener, err := net.Listen("tcp", s.addr)
+	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		panic(err)
 	}
@@ -227,9 +241,21 @@ func (s *Server) ServeTCP() {
 	}
 }
 
-// handle request over HTTP
-// inspired by `https://github.com/gorilla/rpc`
-func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+// ListenAndServe open http support can serve http request
+func (s *Server) ListenAndServe(addr string) {
+	debugF("RPC server over HTTP is listening: %s", addr)
+
+	// TODO: replace timeout to s.codec.Response(timeoutErr).String()
+	timeoutHdl := http.TimeoutHandler(s, 5*time.Second, "timeout")
+
+	if err := http.ListenAndServe(addr, timeoutHdl); err != nil {
+		panic(err)
+	}
+}
+
+// ServeHTTP handle request over HTTP,
+// it also implement the interface of http.Handler
+func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	defer func() {
 		v := recover()
 		if err, ok := v.(error); ok && err != nil {
@@ -237,46 +263,42 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	w.Header().Set("Content-Type", "application/json")
-
-	if r.Method != http.MethodPost {
-		s.codec.Response(nil, nil, MethodNotFound)
+	switch req.Method {
+	case http.MethodGet, http.MethodPost:
+		req.ParseForm()
+	default:
+		resp := s.codec.Response(nil, nil, MethodNotFound)
+		utils.ResponseHTTP(w, encodeResponse(s.codec, resp), isDebug)
 		return
 	}
 
-	// resps := s.handleWithRequests(reqs)
+	data := req.Form.Get("data")
+	if len(data) == 0 {
+		resp := s.codec.Response(nil, nil, InvalidParamErr)
+		utils.ResponseHTTP(w, encodeResponse(s.codec, resp), isDebug)
+		return
+	}
+	debugF("[HTTP] got request data: %s", data)
+
+	rpcReq, err := s.codec.ParseRequest([]byte(data))
+	if err != nil {
+		resp := s.codec.Response(nil, nil, ParseErr)
+		utils.ResponseHTTP(w, encodeResponse(s.codec, resp), isDebug)
+		return
+	}
+
+	// TODO: support mulit request
+	resp := s.call(rpcReq)
+	utils.ResponseHTTP(w, encodeResponse(s.codec, resp), isDebug)
 	return
 }
 
-// responseHTTP
-func responseHTTP(w http.ResponseWriter, v interface{}) {
-	var (
-		byts []byte
-		err  error
-	)
+// encodeResponse ...
+func encodeResponse(codec Codec, resp Response) []byte {
+	byts, err := codec.Encode(resp)
+	if err != nil {
+		panic(resp)
+	}
 
-	if byts, err = json.Marshal(v); err != nil {
-		panic(err)
-	}
-	if _, err = io.WriteString(w, string(byts)); err != nil {
-		panic(err)
-	}
+	return byts
 }
-
-// getRequestFromBody support parse request from jsonBody
-// and parse into Request
-// func getRequestFromBody(req *http.Request) ([]*Request, error) {
-// 	var (
-// 		body []byte
-// 		err  error
-// 	)
-// 	if body, err = ioutil.ReadAll(req.Body); err != nil {
-// 		return nil, err
-// 	}
-// 	if len(body) == 0 {
-// 		return nil, errEmptyBody
-// 	}
-// 	// parse []byte into Request
-// 	mReq, err := parseRequest(body)
-// 	return mReq, err
-// }
