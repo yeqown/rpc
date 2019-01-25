@@ -9,6 +9,8 @@ import (
 var (
 	_ rpc.Request  = &jsonRequest{}
 	_ rpc.Response = &jsonResponse{}
+	_ rpc.Request  = &jsonRequestArray{}
+	_ rpc.Response = &jsonResponseArray{}
 )
 
 type jsonError struct {
@@ -21,6 +23,8 @@ func (j *jsonError) Error() string {
 	return fmt.Sprintf("jsonError(code: %d, message: %s)", j.Code, j.Message)
 }
 
+// jsonRequest is jsonCodec response data struct
+// and implement the inerface named 'rpc.Request'
 type jsonRequest struct {
 	ID      string `json:"id"`
 	Mthd    string `json:"method"`
@@ -28,11 +32,13 @@ type jsonRequest struct {
 	Version string `json:"jsonrpc"`
 }
 
-func (j *jsonRequest) Method() string                      { return j.Mthd }
-func (j *jsonRequest) Params() []byte                      { return j.Args }
-func (j *jsonRequest) CanIter() bool                       { return false }
-func (j *jsonRequest) Iter(iterFunc func(req rpc.Request)) { return }
+func (j *jsonRequest) Method() string                { return j.Mthd }
+func (j *jsonRequest) Params(codec rpc.Codec) []byte { return j.Args }
+func (j *jsonRequest) HasNext() bool                 { return false }
+func (j *jsonRequest) Next() interface{}             { return nil }
 
+// jsonResponse is jsonCodec response data struct
+// and implement the inerface named 'rpc.Response'
 type jsonResponse struct {
 	ID      string     `json:"id"`
 	Err     *jsonError `json:"error,omitempty"`
@@ -40,8 +46,17 @@ type jsonResponse struct {
 	Version string     `json:"jsonrpc"`
 }
 
-func (j *jsonResponse) Reply() []byte { return j.Result }
-func (j *jsonResponse) Error() error  { return j.Err }
+func (j *jsonResponse) Reply(codec rpc.Codec) []byte {
+	return j.Result
+}
+
+func (j *jsonResponse) Error() error {
+	if j.Err == nil {
+		return nil
+	}
+	return errcodeMap[j.Err.Code]
+}
+
 func (j *jsonResponse) ErrCode() int {
 	if j.Err == nil {
 		return rpc.SUCCESS
@@ -49,6 +64,60 @@ func (j *jsonResponse) ErrCode() int {
 	return j.Err.Code
 }
 
-// type jsonMultiRequest []jsonRequest
+func (j *jsonResponse) HasNext() bool     { return false }
+func (j *jsonResponse) Next() interface{} { return nil }
 
-// type jsonMultiResponse []jsonResponse
+// jsonRequestArray implements Request interface
+type jsonRequestArray struct {
+	cur  int
+	Data []*jsonRequest
+}
+
+func (reqa *jsonRequestArray) Method() string { return "" }
+func (reqa *jsonRequestArray) Params(codec rpc.Codec) []byte {
+	// TODO: encode reqa.Data
+	byts, err := codec.Encode(reqa.Data)
+	if err != nil {
+		panic(err)
+	}
+	return byts
+}
+func (reqa *jsonRequestArray) HasNext() bool {
+	return reqa.cur < len(reqa.Data)
+}
+func (reqa *jsonRequestArray) Next() interface{} {
+	v := reqa.Data[reqa.cur]
+	reqa.cur++
+	return v
+}
+
+// jsonResponseArray implements Response interface
+type jsonResponseArray struct {
+	cur  int
+	Data []*jsonResponse
+}
+
+func (respa *jsonResponseArray) Reply(codec rpc.Codec) []byte {
+	byts, err := codec.Encode(respa.Data)
+	if err != nil {
+		panic(err)
+	}
+	return byts
+}
+
+func (respa *jsonResponseArray) Error() error {
+	return nil
+}
+
+func (respa *jsonResponseArray) ErrCode() int {
+	return rpc.SUCCESS
+}
+
+func (respa *jsonResponseArray) HasNext() bool {
+	return respa.cur < len(respa.Data)
+}
+func (respa *jsonResponseArray) Next() interface{} {
+	v := respa.Data[respa.cur]
+	respa.cur++
+	return v
+}

@@ -44,9 +44,9 @@ type Client struct {
 	tcpConn net.Conn
 }
 
-// Call Client Call Remote method
+// CallOverTCP call server over tcp
 // TODO: timeout cancel
-func (c *Client) Call(method string, args, reply interface{}) error {
+func (c *Client) CallOverTCP(method string, args, reply interface{}) error {
 	if c.codec == nil {
 		return errEmptyCodec
 	}
@@ -76,14 +76,14 @@ func (c *Client) Call(method string, args, reply interface{}) error {
 	}
 	// core ...
 
-	if err := c.codec.Decode(resp.Reply(), reply); err != nil {
+	if err := c.codec.Decode(resp.Reply(c.codec), reply); err != nil {
 		return fmt.Errorf("c.codec.Decode(resp.Reply() got err: %v", err)
 	}
 	return nil
 }
 
-// CallHTTP generate a http request and send to the server
-func (c *Client) CallHTTP(method string, args, reply interface{}) error {
+// CallOverHTTP generate a http request and send to the server
+func (c *Client) CallOverHTTP(method string, args, reply interface{}) error {
 	// assemble the request and encode the request to []byte
 	rpcReq := c.codec.Request(method, args)
 	data, err := c.codec.Encode(rpcReq)
@@ -106,10 +106,10 @@ func (c *Client) CallHTTP(method string, args, reply interface{}) error {
 	if err := rpcResp.Error(); err != nil {
 		return fmt.Errorf("rpcResp.Error(): %v", err)
 	}
-	if err := c.codec.Decode(rpcResp.Reply(), reply); err != nil {
+	if err := c.codec.Decode(rpcResp.Reply(c.codec), reply); err != nil {
 		return fmt.Errorf("c.codec.Decode(rpcResp.Reply() got err: %v", err)
 	}
-
+	debugF("client decode to reply: origin %s, decoded: %v", rpcResp.Reply(c.codec), reply)
 	return nil
 }
 

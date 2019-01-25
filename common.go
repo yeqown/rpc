@@ -7,8 +7,18 @@ var (
 	_ Response = &defaultResponse{}
 )
 
+// Iter interface means data structure can be itered
+type Iter interface {
+	HasNext() bool
+	Next() interface{}
+}
+
 // Request interface contains necessary methods
 type Request interface {
+
+	// Iter interface contains 'HasNext() bool' and 'Next() interface{}'
+	Iter
+
 	// Method() to return the string of method name.
 	// exmaple, "StructDemo.Method1"
 	// and, should has no more form
@@ -17,17 +27,14 @@ type Request interface {
 	// Params means all ([]byte) data contains request args
 	// all these origin params (interface{} type)
 	// should be result of codec encoded
-	Params() []byte
-
-	// CanIter tell the request is multi or not
-	CanIter() bool
-
-	// Iter is func to loop all request in special request
-	Iter(func(req Request))
+	Params(codec Codec) []byte
 }
 
 // Response interface contains necessary methods
 type Response interface {
+	// Iter interface contains 'HasNext() bool' and 'Next() interface{}'
+	Iter
+
 	// Error to return err that response struct contains
 	// if there is no any error happend, should return nil
 	Error() error
@@ -38,7 +45,7 @@ type Response interface {
 	// Reply means all ([]byte) data contains response body
 	// all these response data (interface{} type)
 	// should be result of codec encoded
-	Reply() []byte
+	Reply(codec Codec) []byte
 }
 
 type defaultRequest struct {
@@ -50,10 +57,10 @@ type defaultRequest struct {
 	Args []byte
 }
 
-func (d *defaultRequest) Method() string                  { return d.Mthd }
-func (d *defaultRequest) Params() []byte                  { return d.Args }
-func (d *defaultRequest) CanIter() bool                   { return false }
-func (d *defaultRequest) Iter(iterFunc func(req Request)) { return }
+func (d *defaultRequest) Method() string           { return d.Mthd }
+func (d *defaultRequest) Params(code Codec) []byte { return d.Args }
+func (d *defaultRequest) HasNext() bool            { return false }
+func (d *defaultRequest) Next() interface{}        { return nil }
 
 type defaultResponse struct {
 	Rply    []byte
@@ -68,5 +75,7 @@ func (d *defaultResponse) Error() error {
 	return errors.New(d.Err)
 }
 
-func (d *defaultResponse) Reply() []byte { return d.Rply }
-func (d *defaultResponse) ErrCode() int  { return d.Errcode }
+func (d *defaultResponse) Reply(code Codec) []byte { return d.Rply }
+func (d *defaultResponse) ErrCode() int            { return d.Errcode }
+func (d *defaultResponse) HasNext() bool           { return false }
+func (d *defaultResponse) Next() interface{}       { return nil }

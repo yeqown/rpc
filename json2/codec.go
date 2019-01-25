@@ -73,7 +73,6 @@ func (j *jsonCodec) Request(method string, argv interface{}) rpc.Request {
 		panic(err)
 	}
 
-	// if argv is a list
 	req := &jsonRequest{
 		ID:      utils.RandID(),
 		Mthd:    method,
