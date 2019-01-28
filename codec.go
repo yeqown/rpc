@@ -23,9 +23,17 @@ type Codec interface {
 
 	Request(method string, argv interface{}) Request
 	ParseRequest(data []byte) (Request, error)
+
+	// if MultiSupported return true means, can provide funcs
+	// ResponseMulti, ParseResponseMulti, RequestMulti, ParseRequestMulti
+	MultiSupported() bool
+
+	ResponseMulti(resps []Response) Response
+	RequestMulti(cfgs []*RequestConfig) Request
 }
 
-func newGobCodec() *gobCodec {
+// NewGobCodec to generate a new gobCodec instance
+func NewGobCodec() Codec {
 	encBuf := bytes.NewBuffer(nil)
 	decBuf := bytes.NewBuffer(nil)
 
@@ -77,10 +85,11 @@ func (g *gobCodec) Decode(data []byte, out interface{}) error {
 	if err := g.dec.Decode(out); err != nil {
 		return fmt.Errorf("g.dec.Decode(out) got err: %v", err)
 	}
+
 	return nil
 }
 
-// Response ...
+// Request ...
 func (g *gobCodec) Response(req Request, reply []byte, errcode int) Response {
 	resp := new(defaultResponse)
 	if errcode != SUCCESS {
@@ -124,3 +133,7 @@ func (g *gobCodec) ParseResponse(data []byte) (Response, error) {
 	}
 	return resp, nil
 }
+
+func (g *gobCodec) MultiSupported() bool                       { return false }
+func (g *gobCodec) ResponseMulti(resps []Response) Response    { return nil }
+func (g *gobCodec) RequestMulti(cfgs []*RequestConfig) Request { return nil }

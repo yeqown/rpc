@@ -8,7 +8,7 @@ import (
 
 func Test_gobCodec(t *testing.T) {
 	var (
-		codec Codec = newGobCodec()
+		codec Codec = NewGobCodec()
 		bPtr        = new(bool)
 	)
 	*bPtr = true
@@ -64,7 +64,7 @@ func Test_gobCodec(t *testing.T) {
 }
 
 func Test_gobCodecDupEncode(t *testing.T) {
-	codec := newGobCodec()
+	codec := NewGobCodec()
 
 	type ST struct {
 		I int
@@ -103,7 +103,7 @@ func Test_gobCodecDupEncode(t *testing.T) {
 }
 
 func Test_gobCodecDupDecode(t *testing.T) {
-	codec := newGobCodec()
+	codec := NewGobCodec()
 
 	type ST struct {
 		I int

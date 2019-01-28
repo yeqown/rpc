@@ -32,6 +32,7 @@ type jsonRequest struct {
 	Version string `json:"jsonrpc"`
 }
 
+func (j *jsonRequest) GetID() string                 { return j.ID }
 func (j *jsonRequest) Method() string                { return j.Mthd }
 func (j *jsonRequest) Params(codec rpc.Codec) []byte { return j.Args }
 func (j *jsonRequest) HasNext() bool                 { return false }
@@ -46,24 +47,20 @@ type jsonResponse struct {
 	Version string     `json:"jsonrpc"`
 }
 
-func (j *jsonResponse) Reply(codec rpc.Codec) []byte {
-	return j.Result
-}
-
+func (j *jsonResponse) GetID() string                { return j.ID }
+func (j *jsonResponse) Reply(codec rpc.Codec) []byte { return j.Result }
 func (j *jsonResponse) Error() error {
 	if j.Err == nil {
 		return nil
 	}
 	return errcodeMap[j.Err.Code]
 }
-
 func (j *jsonResponse) ErrCode() int {
 	if j.Err == nil {
 		return rpc.SUCCESS
 	}
 	return j.Err.Code
 }
-
 func (j *jsonResponse) HasNext() bool     { return false }
 func (j *jsonResponse) Next() interface{} { return nil }
 
@@ -75,7 +72,6 @@ type jsonRequestArray struct {
 
 func (reqa *jsonRequestArray) Method() string { return "" }
 func (reqa *jsonRequestArray) Params(codec rpc.Codec) []byte {
-	// TODO: encode reqa.Data
 	byts, err := codec.Encode(reqa.Data)
 	if err != nil {
 		panic(err)
@@ -116,6 +112,7 @@ func (respa *jsonResponseArray) ErrCode() int {
 func (respa *jsonResponseArray) HasNext() bool {
 	return respa.cur < len(respa.Data)
 }
+
 func (respa *jsonResponseArray) Next() interface{} {
 	v := respa.Data[respa.cur]
 	respa.cur++

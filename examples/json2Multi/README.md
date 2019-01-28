@@ -1,6 +1,4 @@
-# JSON RPC 2.0
-
-About [JSON-RPC 2.0 Specification](https://www.jsonrpc.org/specification)
+# JSON RPC 2.0 Multi
 
 ## Server-side
 

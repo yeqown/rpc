@@ -79,3 +79,15 @@ func (d *defaultResponse) Reply(code Codec) []byte { return d.Rply }
 func (d *defaultResponse) ErrCode() int            { return d.Errcode }
 func (d *defaultResponse) HasNext() bool           { return false }
 func (d *defaultResponse) Next() interface{}       { return nil }
+
+// RequestConfig ... to support request multi
+type RequestConfig struct {
+	// Method that called by client, if not existed will recv an err.
+	Method string
+
+	// Args should be params pointer type
+	Args interface{}
+
+	// Reply shoule be result pointer type
+	Reply interface{}
+}

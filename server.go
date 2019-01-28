@@ -23,7 +23,7 @@ var (
 // tcp request from rpc client, if codec is nil will use default gobCodec
 func NewServerWithCodec(codec Codec) *Server {
 	if codec == nil {
-		codec = newGobCodec()
+		codec = NewGobCodec()
 	}
 	return &Server{codec: codec}
 }
@@ -139,7 +139,7 @@ func (s *Server) call(req Request) Response {
 	}
 
 	if err := s.codec.Decode(req.Params(s.codec), argv.Interface()); err != nil {
-		debugF("decode params err: %v", err)
+		debugF("s.call decode params err: %v, %s", err, string(req.Params(s.codec)))
 		return &defaultResponse{Err: err.Error(), Errcode: InvalidParamErr}
 	}
 	// convert(req.Params, argv.Interface())
@@ -157,9 +157,6 @@ func (s *Server) call(req Request) Response {
 		return &defaultResponse{Err: err.Error(), Errcode: InternalErr}
 	}
 
-	// Ignore encode while jsonrpc called here!!!
-	// if _, ok:= s.codec.(*gobCodec); ok {
-	// }
 	byts, err := s.codec.Encode(replyv.Interface())
 	if err != nil {
 		return &defaultResponse{Err: err.Error(), Errcode: InternalErr}
@@ -174,7 +171,7 @@ func (s *Server) call(req Request) Response {
 func (s *Server) handleConn(conn net.Conn) {
 	// receive a request
 	data, err := bufio.NewReader(conn).ReadBytes('\n')
-	// debugF("recv a new request: %v", data)
+	debugF("recv a new request: %s", data)
 
 	if err != nil {
 		debugF("response to client connection err: %v", err)
@@ -184,19 +181,17 @@ func (s *Server) handleConn(conn net.Conn) {
 	}
 
 	req, err := s.codec.ParseRequest(data)
-	if err := s.codec.Decode(data, req); err != nil {
-		debugF("server decode request err: %v", err)
-		resp := s.codec.Response(nil, nil, InvalidParamErr)
+	if err != nil {
+		resp := s.codec.Response(nil, nil, ParseErr)
 		utils.WriteServerTCP(conn, encodeResponse(s.codec, resp))
 		return
 	}
-	debugF("[TCP] recv a new request: %s", req)
+	debugF("[TCP] recv a new request: %v, params: %s", req, req.Params(s.codec))
 
 	// hanlde multi request
 	if !req.HasNext() {
 		r := s.call(req)
-		debugF("s.call(req) result: %s", r)
-
+		debugF("[single]s.call(req) req: %v result: %s", req, r)
 		r2 := s.codec.Response(req, r.Reply(s.codec), r.ErrCode())
 		utils.WriteServerTCP(conn, encodeResponse(s.codec, r2))
 		return
@@ -205,11 +200,13 @@ func (s *Server) handleConn(conn net.Conn) {
 	// for multi req
 	resps := make([]Response, 0)
 	for req.HasNext() {
-		v := req.Next()
-		r := s.call(v.(Request))
-		resps = append(resps, s.codec.Response(req, r.Reply(s.codec), r.ErrCode()))
+		nextreq := req.Next().(Request)
+		r := s.call(nextreq)
+		resps = append(resps, s.codec.Response(nextreq, r.Reply(s.codec), r.ErrCode()))
+		debugF("[multi] req.Next() %v, params: %v, result: %s", nextreq, nextreq.Params(s.codec), r)
 	}
-	utils.WriteServerTCP(conn, encodeMultiResponse(s.codec, resps))
+	utils.WriteServerTCP(conn,
+		encodeResponse(s.codec, s.codec.ResponseMulti(resps)))
 	return
 }
 
@@ -314,7 +311,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		resps = append(resps, s.codec.Response(rpcReq, r.Reply(s.codec), r.ErrCode()))
 	}
 
-	utils.ResponseHTTP(w, encodeMultiResponse(s.codec, resps), isDebug)
+	utils.ResponseHTTP(w,
+		encodeResponse(s.codec, s.codec.ResponseMulti(resps)), isDebug)
 	return
 }
 
@@ -330,12 +328,12 @@ func encodeResponse(codec Codec, resp Response) []byte {
 }
 
 // encodeMultiResponse ...
-func encodeMultiResponse(codec Codec, resps []Response) []byte {
-	byts, err := codec.Encode(resps)
-	if err != nil {
-		panic(err)
-	}
-	debugF("encodeMultiResponse: origin %v, encoded: %s", resps, byts)
+// func encodeMultiResponse(codec Codec, resps []Response) []byte {
+// 	byts, err := codec.Encode(resps)
+// 	if err != nil {
+// 		panic(err)
+// 	}
+// 	debugF("encodeMultiResponse: origin %v, encoded: %s", resps, byts)
 
-	return byts
-}
+// 	return byts
+// }
