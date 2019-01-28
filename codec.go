@@ -15,20 +15,32 @@ var (
 // for client to encode request and decode response
 // for server to encode response den decode request
 type Codec interface {
+	// Encode an interface value into []byte
 	Encode(argv interface{}) ([]byte, error)
+
+	// Decode encoded data([]byte) back to an interface which the origin data belongs to
 	Decode(data []byte, argv interface{}) error
 
+	// generate a single Response with needed params
 	Response(req Request, reply []byte, errcode int) Response
+
+	// parse encoded data into a Response
 	ParseResponse(respBody []byte) (Response, error)
 
+	// generate a single Request with needed params
 	Request(method string, argv interface{}) Request
+
+	// parse encoded data into a Request
 	ParseRequest(data []byte) (Request, error)
 
 	// if MultiSupported return true means, can provide funcs
 	// ResponseMulti, ParseResponseMulti, RequestMulti, ParseRequestMulti
 	MultiSupported() bool
 
+	// generate a Response which cann support Iter(iterator interface)
 	ResponseMulti(resps []Response) Response
+
+	// generate a Request which cann support Iter(iterator interface)
 	RequestMulti(cfgs []*RequestConfig) Request
 }
 

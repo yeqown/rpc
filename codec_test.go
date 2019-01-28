@@ -8,8 +8,8 @@ import (
 
 func Test_gobCodec(t *testing.T) {
 	var (
-		codec Codec = NewGobCodec()
-		bPtr        = new(bool)
+		codec = NewGobCodec()
+		bPtr  = new(bool)
 	)
 	*bPtr = true
 

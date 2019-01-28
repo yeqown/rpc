@@ -306,9 +306,9 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	// multi request support
 	resps := make([]Response, 0)
 	for rpcReq.HasNext() {
-		v := rpcReq.Next()
-		r := s.call(v.(Request))
-		resps = append(resps, s.codec.Response(rpcReq, r.Reply(s.codec), r.ErrCode()))
+		nextreq := rpcReq.Next().(Request)
+		r := s.call(nextreq)
+		resps = append(resps, s.codec.Response(nextreq, r.Reply(s.codec), r.ErrCode()))
 	}
 
 	utils.ResponseHTTP(w,

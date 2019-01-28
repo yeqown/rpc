@@ -7,7 +7,7 @@ import (
 )
 
 var (
-	isDebug = true
+	isDebug = false
 	h       hash.Hash
 )
 

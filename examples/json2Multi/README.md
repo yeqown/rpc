@@ -3,7 +3,7 @@
 ## Server-side
 
 ```golang
-// example/rpc/server.go
+// example/json2Multi/server.go
 package main
 
 import (
@@ -19,20 +19,25 @@ type Args struct {
 	B int `json:"b"`
 }
 
+type Result struct {
+	Sum int `json:"sum"`
+}
+
 // Add ...
-func (i *Int) Add(args *Args, reply *int) error {
-	*reply = args.A + args.B
+func (i *Int) Add(args *Args, reply *Result) error {
+	reply.Sum = args.A + args.B
 	return nil
 }
 
 // Sum ...
-func (i *Int) Sum(args *Args, reply *int) error {
-	*reply = args.A + args.B
+func (i *Int) Sum(args *Args, reply *Result) error {
+	reply.Sum = args.A + args.B
 	return nil
 }
 
 func main() {
 	srv := rpc.NewServerWithCodec(json2.NewJSONCodec())
+	// srv := rpc.NewServerWithCodec(json2.NewStdJSONCodec())
 	srv.Register(new(Int))
 	srv.Start("127.0.0.1:9998", "127.0.0.1:9999")
 }
@@ -41,11 +46,12 @@ func main() {
 ## Client-side
 
 ```golang
-// examples/rpc/client.go
+// examples/json2Multi/client.go
 package main
 
 import (
 	"fmt"
+	"log"
 
 	"github.com/yeqown/rpc"
 	"github.com/yeqown/rpc/json2"
@@ -57,43 +63,74 @@ type Args struct {
 	B int `json:"b"`
 }
 
+type Result struct {
+	Sum int `json:"sum"`
+}
+
 func main() {
 	c := rpc.NewClientWithCodec(json2.NewJSONCodec(), "127.0.0.1:9998", "127.0.0.1:9999")
+	// c := rpc.NewClientWithCodec(json2.NewStdJSONCodec(), "127.0.0.1:9998", "127.0.0.1:9999")
+
 	testAddOverTCP(c)
 	testAddOverHTTP(c)
 }
 
 func testAddOverTCP(c *rpc.Client) {
-	var (
-		sum  int
-		args = &Args{A: 1, B: 222}
-	)
-	if err := c.CallOverTCP("Int.Add", args, &sum); err != nil {
-		println("got err: ", err.Error())
+	cfgs := []*rpc.RequestConfig{
+		&rpc.RequestConfig{
+			Method: "Int.Add",
+			Args:   &Args{121233, 1912109},
+			Reply:  &Result{},
+		},
+		&rpc.RequestConfig{
+			Method: "Int.Sum",
+			Args:   &Args{2311231, 1909},
+			Reply:  &Result{},
+		},
 	}
 
-	fmt.Printf("[TCP] Int.Add(%d, %d) got %d, want: %d\n", args.A, args.B, sum, args.A+args.B)
+	if err := c.CallOverTCPMulti(cfgs); err != nil {
+		log.Printf("c.CallOverTCPMulti client got err: %v", err)
+	}
+	for _, cfg := range cfgs {
+		args := cfg.Args.(*Args)
+		result := cfg.Reply.(*Result)
+		fmt.Printf("[TCP] Int.Add(%d, %d) got %d, want: %d\n", args.A, args.B, result.Sum, args.A+args.B)
+	}
 }
 
 func testAddOverHTTP(c *rpc.Client) {
-	var (
-		sum  int
-		args = &Args{A: 12312, B: 8712}
-	)
-	if err := c.CallOverHTTP("Int.Sum", args, &sum); err != nil {
-		println("got err: ", err.Error())
+	cfgs := []*rpc.RequestConfig{
+		&rpc.RequestConfig{
+			Method: "Int.Add",
+			Args:   &Args{10, 1909},
+			Reply:  &Result{},
+		},
+		&rpc.RequestConfig{
+			Method: "Int.Sum",
+			Args:   &Args{21312, 1909},
+			Reply:  &Result{},
+		},
 	}
-
-	fmt.Printf("[HTTP] Int.Sum(%d, %d) got %d, want: %d\n", args.A, args.B, sum, args.A+args.B)
+	if err := c.CallOverHTTPMulti(cfgs); err != nil {
+		log.Printf("c.CallOverHTTPMulti client got err: %v", err)
+	}
+	for _, cfg := range cfgs {
+		args := cfg.Args.(*Args)
+		result := cfg.Reply.(*Result)
+		fmt.Printf("[HTTP] Int.Add(%d, %d) got %d, want: %d\n", args.A, args.B, result.Sum, args.A+args.B)
+	}
 }
+
 ```
 
 ## Output
 
 ```sh
-[TCP] Int.Add(1, 222) got 223, want: 223
-2019/01/25 16:26:08 [debug]: send request [addr: 127.0.0.1:9999] [data: eyJpZCI6ImQxMTcxZjMzNGQ3NmFlN2JkYjBlNDI2M2NkMDM4NWNjIiwibWV0aG9kIjoiSW50LlN1bSIsInBhcmFtcyI6IlpYbEthRWxxYjNoTmFrMTRUV2wzYVZscFNUWlBSR040VFc0d1BRPT0iLCJqc29ucnBjIjoiMi4wIn0=]
-2019/01/25 16:26:08 [debug]: got response eyJpZCI6ImQxMTcxZjMzNGQ3NmFlN2JkYjBlNDI2M2NkMDM4NWNjIiwicmVzdWx0IjoiWlhsS2VtUlhNR2xQYWtsNFRVUkpNR1pSUFQwPSIsImpzb25ycGMiOiIyLjAifQ==
-2019/01/25 16:26:08 [debug]: client decode to reply: origin eyJzdW0iOjIxMDI0fQ==, decoded: 0xc00009a5d8
-[HTTP] Int.Sum(12312, 8712) got 21024, want: 21024
+2019/01/28 18:54:56 try to decode into jsonResponseArray
+[TCP] Int.Add(121233, 1912109) got 2033342, want: 2033342
+[TCP] Int.Add(2311231, 1909) got 2313140, want: 2313140
+2019/01/28 18:54:56 try to decode into jsonResponseArray
+[HTTP] Int.Add(10, 1909) got 1919, want: 1919
+[HTTP] Int.Add(21312, 1909) got 23221, want: 23221
 ```
