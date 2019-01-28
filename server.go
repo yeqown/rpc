@@ -1,26 +1,17 @@
-//
-// 1. register function into service map
-// 2. running as tcp server
-// 3. accept client request, parse Args and call related function
-// 4. response
-
 package rpc
 
 import (
 	"bufio"
-	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
-	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
 	"reflect"
 	"strings"
 	"sync"
-	"unicode"
-	"unicode/utf8"
+	"time"
+
+	"github.com/yeqown/rpc/utils"
 )
 
 var (
@@ -28,60 +19,32 @@ var (
 	errEmptyBody = errors.New("empty json body")
 )
 
-type methodType struct {
-	method    reflect.Method
-	ArgType   reflect.Type
-	ReplyType reflect.Type
-	// sync.Mutex // protects counters
-	// numCalls   uint
-}
-
-type service struct {
-	name   string
-	rcvr   reflect.Value
-	typ    reflect.Type
-	method map[string]*methodType
-}
-
-func (s *service) call(mtype *methodType, req *Request, argv, replyv reflect.Value) *Response {
-	function := mtype.method.Func
-	// fmt.Println(argv, replyv)
-	returnValues := function.Call([]reflect.Value{s.rcvr, argv, replyv})
-	errIter := returnValues[0].Interface()
-
-	errmsg := ""
-	if errIter != nil {
-		errmsg = errIter.(error).Error()
-		return NewResponse(req.ID, nil, NewJsonrpcErr(InternalErr, errmsg, nil))
+// NewServerWithCodec generate a server to handle all
+// tcp request from rpc client, if codec is nil will use default gobCodec
+func NewServerWithCodec(codec Codec) *Server {
+	if codec == nil {
+		codec = NewGobCodec()
 	}
-
-	return NewResponse(req.ID, replyv.Interface(), nil)
+	return &Server{codec: codec}
 }
 
-// NewServer want to save 'Type.Method' as key,
-// `Method(Func type)` as value
-// type MethodMap map[string]*service
-func NewServer() *Server {
-	return &Server{}
-}
-
-// Server ...
+// Server data struct to serve RPC request over TCP and HTTP
 type Server struct {
-	m sync.Map // map[string]*service
+	m     sync.Map // map[string]*service
+	codec Codec    // codec to read request and writeResponse
 }
 
 // Register parse register type and method
 // maybe save into a Map, input value is a varible
 // want to got varible type name, and all Method Name
 func (s *Server) Register(rcvr interface{}) error {
-
-	_service := new(service)
-	_service.typ = reflect.TypeOf(rcvr)
-	_service.rcvr = reflect.ValueOf(rcvr)
-	sname := reflect.Indirect(_service.rcvr).Type().Name()
+	srvic := new(service)
+	srvic.typ = reflect.TypeOf(rcvr)
+	srvic.rcvr = reflect.ValueOf(rcvr)
+	sname := reflect.Indirect(srvic.rcvr).Type().Name()
 
 	if sname == "" {
-		errmsg := "rpc.Register: no service name for type " + _service.typ.String()
+		errmsg := "rpc.Register: no service name for type " + srvic.typ.String()
 		log.Print(errmsg)
 		return errors.New(errmsg)
 	}
@@ -91,117 +54,72 @@ func (s *Server) Register(rcvr interface{}) error {
 		log.Print(errmsg)
 		return errors.New(errmsg)
 	}
-	_service.name = sname
-	_service.method = suitableMethods(_service.typ, true)
+	srvic.name = sname
+	srvic.method = suitableMethods(srvic.typ)
 
-	if _, dup := s.m.LoadOrStore(sname, _service); dup {
+	if _, dup := s.m.LoadOrStore(sname, srvic); dup {
 		return errors.New("rpc: service already defined: " + sname)
 	}
 	return nil
 }
 
-// suitableMethods get all method of registering-type
-// into a map[string]*methodType
-func suitableMethods(typ reflect.Type, reportErr bool) map[string]*methodType {
-	methods := make(map[string]*methodType)
-	for m := 0; m < typ.NumMethod(); m++ {
-		method := typ.Method(m)
-		mtype := method.Type
-		mname := method.Name
+// RegisterName ... only want to export one method of rcvr
+func (s *Server) RegisterName(rcvr interface{}, methodName string) error {
+	srvic := new(service)
+	srvic.typ = reflect.TypeOf(rcvr)
+	srvic.rcvr = reflect.ValueOf(rcvr)
+	sname := reflect.Indirect(srvic.rcvr).Type().Name()
 
-		// Method must be exported.
-		if method.PkgPath != "" {
-			continue
+	mt := suitableMethodWtihName(srvic.typ, methodName)
+
+	i, ex := s.m.Load(sname)
+	if ex {
+		loadedSrvic := i.(*service)
+		loadedSrvic.method[mt.method.Name] = mt
+		s.m.Store(sname, loadedSrvic)
+	} else {
+		if sname == "" {
+			errmsg := "rpc.Register: no service name for type " + srvic.typ.String()
+			log.Print(errmsg)
+			return errors.New(errmsg)
 		}
-		// Method needs three ins: receiver, *args, *reply.
-		if mtype.NumIn() != 3 {
-			if reportErr {
-				log.Printf("rpc.Register: method %q has %d input parameters; needs exactly three\n", mname, mtype.NumIn())
-			}
-			continue
+
+		if !isExported(sname) {
+			errmsg := "rpc.Register: type " + sname + " is not exported"
+			log.Print(errmsg)
+			return errors.New(errmsg)
 		}
-		// First arg need not be a pointer.
-		argType := mtype.In(1)
-		if !isExportedOrBuiltinType(argType) {
-			if reportErr {
-				log.Printf("rpc.Register: argument type of method %q is not exported: %q\n", mname, argType)
-			}
-			continue
-		}
-		// Second arg must be a pointer.
-		replyType := mtype.In(2)
-		if replyType.Kind() != reflect.Ptr {
-			if reportErr {
-				log.Printf("rpc.Register: reply type of method %q is not a pointer: %q\n", mname, replyType)
-			}
-			continue
-		}
-		// Reply type must be exported.
-		if !isExportedOrBuiltinType(replyType) {
-			if reportErr {
-				log.Printf("rpc.Register: reply type of method %q is not exported: %q\n", mname, replyType)
-			}
-			continue
-		}
-		// Method needs one out.
-		if mtype.NumOut() != 1 {
-			if reportErr {
-				log.Printf("rpc.Register: method %q has %d output parameters; needs exactly one\n", mname, mtype.NumOut())
-			}
-			continue
-		}
-		// The return type of the method must be error.
-		if returnType := mtype.Out(0); returnType != typeOfError {
-			if reportErr {
-				log.Printf("rpc.Register: return type of method %q is %q, must be error\n", mname, returnType)
-			}
-			continue
-		}
-		methods[mname] = &methodType{method: method, ArgType: argType, ReplyType: replyType}
+		srvic.name = sname
+		srvic.method = make(map[string]*methodType)
+		srvic.method[mt.method.Name] = mt
+		s.m.Store(sname, srvic)
 	}
-	return methods
-}
-
-// type isExported
-func isExported(name string) bool {
-	rune, _ := utf8.DecodeRuneInString(name)
-	return unicode.IsUpper(rune)
-}
-
-// Is this type exported or a builtin?
-func isExportedOrBuiltinType(t reflect.Type) bool {
-	for t.Kind() == reflect.Ptr {
-		t = t.Elem()
-	}
-	// PkgPath will be non-empty even for an exported type,
-	// so we need to check the type name as well.
-	return isExported(t.Name()) || t.PkgPath() == ""
+	return nil
 }
 
 // before Call must parse and decode param into reflect.Value
 // after Call must encode and response
-func (s *Server) call(req *Request) *Response {
-	// TODO: simplfy this function, or split into several functions
-	dot := strings.LastIndex(req.Method, ".") // split req.Method like "type.Method"
+func (s *Server) call(req Request) Response {
+	defer func() { debugF("server called end") }()
+	reqMethod := req.Method()
+
+	dot := strings.LastIndex(reqMethod, ".") // split req.Method like "type.Method"
 	if dot < 0 {
-		err := errors.New("rpc: service/method request ill-formed: " + req.Method)
-		return NewResponse(req.ID, nil, NewJsonrpcErr(ParseErr, err.Error(), err))
+		return &defaultResponse{Err: "rpc: service/method request ill-formed: " + reqMethod, Errcode: InvalidRequest}
 	}
 
-	serviceName := req.Method[:dot]
-	methodName := req.Method[dot+1:]
+	serviceName := reqMethod[:dot]
+	methodName := reqMethod[dot+1:]
 
 	// method existed or not
 	svci, ok := s.m.Load(serviceName)
 	if !ok {
-		err := errors.New("rpc: can't find service " + req.Method)
-		return NewResponse(req.ID, nil, NewJsonrpcErr(MethodNotFound, err.Error(), nil))
+		return &defaultResponse{Err: "rpc: can't find service " + reqMethod, Errcode: MethodNotFound}
 	}
 	svc := svci.(*service)
 	mtype := svc.method[methodName]
 	if mtype == nil {
-		err := errors.New("rpc: can't find method " + req.Method)
-		return NewResponse(req.ID, nil, NewJsonrpcErr(MethodNotFound, err.Error(), nil))
+		return &defaultResponse{Err: "rpc: can't find method " + reqMethod, Errcode: MethodNotFound}
 	}
 
 	// to prepare argv and replyv in reflect.Value
@@ -220,7 +138,11 @@ func (s *Server) call(req *Request) *Response {
 		argv = argv.Elem()
 	}
 
-	convert(req.Params, argv.Interface())
+	if err := s.codec.Decode(req.Params(s.codec), argv.Interface()); err != nil {
+		debugF("s.call decode params err: %v, %s", err, string(req.Params(s.codec)))
+		return &defaultResponse{Err: err.Error(), Errcode: InvalidParamErr}
+	}
+	// convert(req.Params, argv.Interface())
 	// fmt.Println(argv.Interface())
 
 	replyv := reflect.New(mtype.ReplyType.Elem())
@@ -231,150 +153,187 @@ func (s *Server) call(req *Request) *Response {
 		replyv.Elem().Set(reflect.MakeSlice(mtype.ReplyType.Elem(), 0, 0))
 	}
 
-	return svc.call(mtype, req, argv, replyv)
+	if err := svc.call(mtype, argv, replyv); err != nil {
+		return &defaultResponse{Err: err.Error(), Errcode: InternalErr}
+	}
+
+	byts, err := s.codec.Encode(replyv.Interface())
+	if err != nil {
+		return &defaultResponse{Err: err.Error(), Errcode: InternalErr}
+	}
+	debugF("s.call got %v, encoded to be: %s", replyv.Interface(), byts)
+
+	return &defaultResponse{Err: "", Rply: byts, Errcode: SUCCESS}
 }
 
 // handleConn to recive a conn,
 // parse Request and then transfer to call.
-func (s *Server) handleConn(conn io.ReadWriteCloser) {
-	var respsBytes []byte
-
-	// receive
+func (s *Server) handleConn(conn net.Conn) {
+	// receive a request
 	data, err := bufio.NewReader(conn).ReadBytes('\n')
+	debugF("recv a new request: %s", data)
+
 	if err != nil {
-		errmsg := "reciving connection get an error:" + err.Error()
-		fmt.Println(errmsg)
-		respsBytes = encodeResponse(
-			NewResponse("", nil,
-				NewJsonrpcErr(ParseErr, errmsg, nil),
-			),
-		)
-		conn.Write(respsBytes)
+		debugF("response to client connection err: %v", err)
+		resp := s.codec.Response(nil, nil, InternalErr)
+		utils.WriteServerTCP(conn, encodeResponse(s.codec, resp))
 		return
 	}
 
-	// parse request, must support multi request
-	reqs, err := parseRequest(data)
+	req, err := s.codec.ParseRequest(data)
 	if err != nil {
-		respsBytes = encodeResponse(
-			NewResponse("", nil,
-				NewJsonrpcErr(ParseErr, err.Error(), nil),
-			),
-		)
-		conn.Write(respsBytes)
+		resp := s.codec.Response(nil, nil, ParseErr)
+		utils.WriteServerTCP(conn, encodeResponse(s.codec, resp))
+		return
+	}
+	debugF("[TCP] recv a new request: %v, params: %s", req, req.Params(s.codec))
+
+	// hanlde multi request
+	if !req.HasNext() {
+		r := s.call(req)
+		debugF("[single]s.call(req) req: %v result: %s", req, r)
+		r2 := s.codec.Response(req, r.Reply(s.codec), r.ErrCode())
+		utils.WriteServerTCP(conn, encodeResponse(s.codec, r2))
 		return
 	}
 
-	resps := s.handleWithRequests(reqs)
-	if len(resps) > 1 {
-		respsBytes = encodeMultiResponse(resps)
-	} else {
-		respsBytes = encodeResponse(resps[0])
+	// for multi req
+	resps := make([]Response, 0)
+	for req.HasNext() {
+		nextreq := req.Next().(Request)
+		r := s.call(nextreq)
+		resps = append(resps, s.codec.Response(nextreq, r.Reply(s.codec), r.ErrCode()))
+		debugF("[multi] req.Next() %v, params: %v, result: %s", nextreq, nextreq.Params(s.codec), r)
 	}
-
-	// println("response:", string(respsBytes))
-	respsBytes = append(respsBytes, byte('\n'))
-	conn.Write(respsBytes)
+	utils.WriteServerTCP(conn,
+		encodeResponse(s.codec, s.codec.ResponseMulti(resps)))
+	return
 }
 
-func (s *Server) handleWithRequests(reqs []*Request) []*Response {
-	resps := make([]*Response, 0, MaxMultiRequest)
-
-	// call method
-	if len(reqs) > 1 {
-		for _, req := range reqs {
-			resp := s.call(req)
-			resps = append(resps, resp)
-		}
-	} else {
-		req := reqs[0]
-		resp := s.call(req)
-		resps = append(resps, resp)
+// Start open tcp and http to serve request,
+// open or not depends on that is addr an empty string,
+// you can also open tcp by s.ServeTCP(addr), at the same time
+// open http by s.ListenAndServe(addr)
+func (s *Server) Start(tcpAddr, httpAddr string) {
+	wait := make(chan bool)
+	if httpAddr != "" {
+		go s.ListenAndServe(httpAddr)
 	}
-	return resps
+
+	if tcpAddr != "" {
+		go s.ServeTCP(tcpAddr)
+	}
+
+	<-wait
 }
 
-// HandleTCP Dealing with request
+// ServeTCP Dealing with request
 // decode and Call and response
-func (s *Server) HandleTCP(addr string) {
-	log.Println("RPC Server is listening")
-	l, err := net.Listen("tcp", addr)
+func (s *Server) ServeTCP(addr string) {
+	debugF("RPC server over TCP is listening: %s", addr)
+
+	// make a listener over TCP
+	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		panic(err)
 	}
 
 	for {
-		conn, err := l.Accept()
+		conn, err := listener.Accept()
 		if err != nil {
 			log.Println(err.Error())
 			continue
 		}
+		// TODO: pool goroutine
 		go s.handleConn(conn)
 	}
 }
 
-// Handle Request over HTTP
-// Inspired by `https://github.com/gorilla/rpc`
-func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// valid request method
-	var resp *Response
+// ListenAndServe open http support can serve http request
+func (s *Server) ListenAndServe(addr string) {
+	debugF("RPC server over HTTP is listening: %s", addr)
 
-	w.Header().Set("Content-Type", "application/json")
+	// TODO: replace timeout to s.codec.Response(timeoutErr).String()
+	timeoutHdl := http.TimeoutHandler(s, 5*time.Second, "timeout")
 
-	if r.Method != http.MethodPost {
-		resp = NewResponse("", nil, NewJsonrpcErr(
-			http.StatusMethodNotAllowed, "HTTP request method must be POST", nil),
-		)
-		response(w, resp)
+	if err := http.ListenAndServe(addr, timeoutHdl); err != nil {
+		panic(err)
+	}
+}
+
+// ServeHTTP handle request over HTTP,
+// it also implement the interface of http.Handler
+func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	defer func() {
+		v := recover()
+		if err, ok := v.(error); ok && err != nil {
+			log.Printf("%v", err)
+		}
+	}()
+
+	switch req.Method {
+	case http.MethodGet, http.MethodPost:
+		req.ParseForm()
+	default:
+		resp := s.codec.Response(nil, nil, MethodNotFound)
+		utils.ResponseHTTP(w, encodeResponse(s.codec, resp), isDebug)
 		return
 	}
-	// parseJsonBody
-	reqs, err := getRequestFromBody(r)
+
+	data := req.Form.Get("data")
+	if len(data) == 0 {
+		resp := s.codec.Response(nil, nil, InvalidParamErr)
+		utils.ResponseHTTP(w, encodeResponse(s.codec, resp), isDebug)
+		return
+	}
+	debugF("[HTTP] got request data: %s", data)
+
+	rpcReq, err := s.codec.ParseRequest([]byte(data))
 	if err != nil {
-		resp = NewResponse("", nil, NewJsonrpcErr(InternalErr, err.Error(), nil))
-		response(w, resp)
+		resp := s.codec.Response(nil, nil, ParseErr)
+		utils.ResponseHTTP(w, encodeResponse(s.codec, resp), isDebug)
 		return
 	}
 
-	resps := s.handleWithRequests(reqs)
-
-	if len(resps) > 1 {
-		response(w, resps)
-	} else {
-		response(w, resps[0])
+	if !rpcReq.HasNext() {
+		r := s.call(rpcReq)
+		resp := s.codec.Response(rpcReq, r.Reply(s.codec), r.ErrCode())
+		debugF("s.call(rpcReq) result: %s", resp)
+		utils.ResponseHTTP(w, encodeResponse(s.codec, resp), isDebug)
+		return
 	}
+
+	// multi request support
+	resps := make([]Response, 0)
+	for rpcReq.HasNext() {
+		nextreq := rpcReq.Next().(Request)
+		r := s.call(nextreq)
+		resps = append(resps, s.codec.Response(nextreq, r.Reply(s.codec), r.ErrCode()))
+	}
+
+	utils.ResponseHTTP(w,
+		encodeResponse(s.codec, s.codec.ResponseMulti(resps)), isDebug)
 	return
 }
 
-// response
-func response(w http.ResponseWriter, i interface{}) {
-	bs, err := json.Marshal(i)
+// encodeResponse ...
+func encodeResponse(codec Codec, resp Response) []byte {
+	byts, err := codec.Encode(resp)
 	if err != nil {
-		resp := NewResponse("", nil,
-			NewJsonrpcErr(InternalErr, err.Error(), nil),
-		)
-		bs, _ = json.Marshal(resp)
+		panic(err)
 	}
-	_, err = io.WriteString(w, string(bs))
-	if err != nil {
-		println("Send to client err:", err.Error())
-	}
+	debugF("encodeResponse: origin %v, encoded: %s", resp, byts)
+
+	return byts
 }
 
-// getRequestFromBody support parse request from jsonBody
-// and parse into Request
-func getRequestFromBody(req *http.Request) ([]*Request, error) {
-	var (
-		body []byte
-		err  error
-	)
-	if body, err = ioutil.ReadAll(req.Body); err != nil {
-		return nil, err
-	}
-	if len(body) == 0 {
-		return nil, errEmptyBody
-	}
-	// parse []byte into Request
-	mReq, err := parseRequest(body)
-	return mReq, err
-}
+// encodeMultiResponse ...
+// func encodeMultiResponse(codec Codec, resps []Response) []byte {
+// 	byts, err := codec.Encode(resps)
+// 	if err != nil {
+// 		panic(err)
+// 	}
+// 	debugF("encodeMultiResponse: origin %v, encoded: %s", resps, byts)
+
+// 	return byts
+// }

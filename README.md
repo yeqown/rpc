@@ -1,180 +1,156 @@
-# RPC (JSON-RPC 2.0)
+# RPC lib based Golang
+[![Go Report Card](https://goreportcard.com/badge/github.com/yeqown/rpc)](https://goreportcard.com/report/github.com/yeqown/rpc) [![GoReportCard](https://godoc.org/github.com/yeqown/rpc?status.svg)](https://godoc.org/github.com/yeqown/rpc)
 
-remote procedure call over TCP and HTTP(Post & json-body only), only support JSON-RPC 2.0.
+In distributed computing, a remote procedure call (RPC) is when a computer program causes a procedure (subroutine) to execute in a different address space (commonly on another computer on a shared network), which is coded as if it were a normal (local) procedure call, without the programmer explicitly coding the details for the remote interaction. That is, the programmer writes essentially the same code whether the subroutine is local to the executing program, or remote. This is a form of client–server interaction (caller is client, executor is server), typically implemented via a request–response message-passing system. In the object-oriented programming paradigm, RPC calls are represented by remote method invocation (RMI). The RPC model implies a level of location transparency, namely that calling procedures is largely the same whether it is local or remote, but usually they are not identical, so local calls can be distinguished from remote calls. Remote calls are usually orders of magnitude slower and less reliable than local calls, so distinguishing them is important.
 
-> Note: Currently, tests are inadequate 0.0, I'll do this quickly. And this lib is too slow ~
+## Todos
 
-### Doc
+* [x] Codec feature.
+* [x] RPC implemention over TCP.
+* [x] RPC implemention over HTTP.
+* [x] JSON RPC(v2) implemention over TCP and HTTP.
+* [ ] more test cases.
+* [ ] compatible with JSON RPC 1.0
 
-ref to:
-[https://godoc.org/github.com/yeqown/rpc](https://godoc.org/github.com/yeqown/rpc)
+## Documention
 
-### Sample Code
+#### About interface `Codec`
 
-link to [code](sample/server/client.go)
-```golang
-package main
+`Codec` is a interface contains fields:
+```go
+// Codec to encode and decode
+// for client to encode request and decode response
+// for server to encode response den decode request
+type Codec interface {
+	// Encode an interface value into []byte
+	Encode(argv interface{}) ([]byte, error)
 
-import (
-	"fmt"
-	"reflect"
+	// Decode encoded data([]byte) back to an interface which the origin data belongs to
+	Decode(data []byte, argv interface{}) error
 
-	"github.com/yeqown/rpc"
-)
+	// generate a single Response with needed params
+	Response(req Request, reply []byte, errcode int) Response
 
-// Args ...
-type Args struct {
-	A int `json:"a"`
-	B int `json:"b"`
+	// parse encoded data into a Response
+	ParseResponse(respBody []byte) (Response, error)
+
+	// generate a single Request with needed params
+	Request(method string, argv interface{}) Request
+
+	// parse encoded data into a Request
+	ParseRequest(data []byte) (Request, error)
+
+	// if MultiSupported return true means, can provide funcs
+	// ResponseMulti, ParseResponseMulti, RequestMulti, ParseRequestMulti
+	MultiSupported() bool
+
+	// generate a Response which cann support Iter(iterator interface)
+	ResponseMulti(resps []Response) Response
+
+	// generate a Request which cann support Iter(iterator interface)
+	RequestMulti(cfgs []*RequestConfig) Request
 }
-
-// MultyArgs ...
-type MultyArgs struct {
-	A *Args `json:"aa"`
-	B *Args `json:"bb"`
-}
-
-// MultyReply ...
-type MultyReply struct {
-	A int `json:"aa"`
-	B int `json:"bb"`
-}
-
-func main() {
-	c := rpc.NewClient()
-	c.DialTCP("127.0.0.1:9999")
-	testAdd(c)
-
-	// after c.Call the conn will be closed
-	c.DialTCP("127.0.0.1:9999")
-	testMultyReply(c)
-
-	c.DialTCP("127.0.0.1:9999")
-	testMultiParamAdd(c)
-}
-
-func testAdd(c *rpc.Client) {
-	var (
-		sum     = 0
-		wantSum = 3
-	)
-	c.Call("1", "Int.Sum", &Args{A: 1, B: 2}, &sum)
-	if !reflect.DeepEqual(sum, wantSum) {
-		err := fmt.Errorf("Int.Sum Result %d not equal to %d", sum, wantSum)
-		fmt.Println(err)
-		return
-	}
-	fmt.Println("testAdd passed")
-}
-
-func testMultiParamAdd(c *rpc.Client) {
-	var (
-		params  = make([]*Args, 3)
-		sum     = make([]*int, 3)
-		wantSum = make([]*int, 3)
-	)
-
-	for i := 0; i < 3; i++ {
-		params[i] = &Args{A: i, B: i * 2}
-		wantSum[i] = new(int)
-		sum[i] = new(int)
-		*(wantSum[i]) = (i + i*2)
-		// allocate the mem for reply , or cannot set the Response.Result to reply
-	}
-
-	c.CallMulti("Int.Sum", &params, &sum)
-	// fmt.Printf("%v, %v", sum, wantSum)
-	// for _, v := range sum {
-	// 	fmt.Println(*v)
-	// }
-	if !reflect.DeepEqual(sum, wantSum) {
-		err := fmt.Errorf("Int.Sum Result %v not equal to %v", sum, wantSum)
-		fmt.Println(err)
-		return
-	}
-	fmt.Println("testMultiParamAdd passed")
-}
-
-func testMultyReply(c *rpc.Client) {
-	var (
-		reply     MultyReply
-		wantReply = MultyReply{
-			A: 2,
-			B: 12,
-		}
-	)
-	c.Call("2", "Int.Multy", &MultyArgs{A: &Args{1, 2}, B: &Args{3, 4}}, &reply)
-	if !reflect.DeepEqual(reply, wantReply) {
-		err := fmt.Errorf("Int.Multy Result %v not equal to %v", reply, wantReply)
-		fmt.Println(err)
-		return
-	}
-	fmt.Println("testMultyReply passed")
-}
-
 ```
 
-link to [code](sample/server/server.go)
-```golang
-package main
+#### About struct `RequestConfig`
 
-import (
-	"net/http"
+`RequestConfig` is a data structure to call multiple request config, it contains:
+```go
+// RequestConfig ... to support request multi
+type RequestConfig struct {
+	// Method that called by client, if not existed will recv an err.
+	Method string
 
-	"github.com/yeqown/rpc"
-)
+	// Args should be params pointer type
+	Args interface{}
 
-// Int ... custom type for JSON-RPC test
-type Int int
-
-// Args ... for Sum Method
-type Args struct {
-	A int `json:"a"`
-	B int `json:"b"`
+	// Reply shoule be result pointer type
+	Reply interface{}
 }
-
-// Sum ...
-func (i *Int) Sum(args *Args, reply *int) error {
-	// println("called", args.A, args.B)
-	*reply = args.A + args.B
-	// *reply = 2
-	return nil
-}
-
-// MultyArgs ... from Multy Int.Method
-type MultyArgs struct {
-	A *Args `json:"aa"`
-	B *Args `json:"bb"`
-}
-
-// MultyReply ...
-type MultyReply struct {
-	A int `json:"aa"`
-	B int `json:"bb"`
-}
-
-// Multy ... times params
-func (i *Int) Multy(args *MultyArgs, reply *MultyReply) error {
-	reply.A = (args.A.A * args.A.B)
-	reply.B = (args.B.A * args.B.B)
-	// fmt.Println(*args.A, *args.B, *reply)
-	return nil
-}
-
-func main() {
-	s := rpc.NewServer()
-	i := new(Int)
-	s.Register(i)
-	go s.HandleTCP("127.0.0.1:9999")
-
-	// to support http Request
-	http.ListenAndServe(":9998", s)
-}
-
 ```
 
-# Sample Running Shotting
+use this config while needing send a multi request at one time, just like this:
 
-![server](https://raw.githubusercontent.com/yeqown/rpc/master/screenshot/server.png)
-![client](https://raw.githubusercontent.com/yeqown/rpc/master/screenshot/client.png)
-![http-support](https://raw.githubusercontent.com/yeqown/rpc/master/screenshot/http-support.png)
+```go
+cfgs := []*rpc.RequestConfig{
+	&rpc.RequestConfig{
+		Method: "Int.Add",
+		Args:   &Args{10, 1909},
+		Reply:  &Result{},
+	},
+	&rpc.RequestConfig{
+		Method: "Int.Sum",
+		Args:   &Args{21312, 1909},
+		Reply:  &Result{},
+	},
+}
+// c.CallOverTCPMulti(cfgs) is ok too
+if err := c.CallOverHTTPMulti(cfgs); err != nil {
+	log.Printf("c.CallOverHTTPMulti client got err: %v", err)
+}
+```
+
+#### Server Side API
+
+
+`Register` will register all exported method of `rcvr`
+```go
+func (s *Server) Register(rcvr interface{})
+```
+
+`RegisterName` only register the appointed `method` of `rcvr`
+```go
+func (s *Server) RegisterName(rcvr interface{}, methodName string)
+```
+
+`ServeTCP` to run *TCP* server
+```go
+func (s *Server) ServeTCP(tcpAddr string)
+```
+
+`ServeHTTP` to implement `http.Handler` interface so that the server can serve with *HTTP* request
+```go
+func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request)
+```
+
+`ListenAndServe` to run an http server and handle each request
+```go
+func (s *Server) ListenAndServe(httpAddr string)
+```
+
+`Start` to run TCP and HTTP server, if any `addr` is empty, the server whose addr is empty will not run
+```go
+func (s *Server) Start(tcpAddr, httpAddr string)
+```
+
+#### Client Side API
+
+`CallOverTCP` call `method` with `argv` and return value into `reply` over *TCP*
+```go
+func (c *Client) CallOverTCP(method string, argv, reply interface{})
+```
+
+`CallOverTCPMulti` send multi request to server configed by `cfgs`, get result form `cfg.Reply`
+```go
+func (c *Client) CallOverTCPMulti(cfgs []*RequestConfig)
+```
+
+`CallOverHTTP` work like `CallOverTCP`, the difference is over *HTTP* rather than *TCP*
+```go
+func (c *Client) CallOverHTTP(method string, argv, reply interface{})
+```
+
+`CallOverHTTPMulti` works like `CallOverTCPMulti`
+```go
+func (c *Client) CallOverHTTPMulti(tcpAddr, httpAddr string)
+```
+
+`Close` `c.conn` (tcp connection)
+```go
+func (c *Client) Close()
+```
+
+## Examples
+
+### [RPC example](examples/rpc)
+### [JSON RPC example](examples/json2)
