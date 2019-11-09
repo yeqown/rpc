@@ -2,16 +2,19 @@ package rpc
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
+	"io"
+	"io/ioutil"
 	"log"
 	"net"
 	"net/http"
 	"reflect"
-	"strings"
+	"runtime/debug"
 	"sync"
 	"time"
 
-	"github.com/yeqown/rpc/utils"
+	"github.com/yeqown/rpc/proto"
 )
 
 var (
@@ -45,13 +48,15 @@ func (s *Server) Register(rcvr interface{}) error {
 
 	if sname == "" {
 		errmsg := "rpc.Register: no service name for type " + srvic.typ.String()
-		log.Print(errmsg)
+		// log.Print(errmsg)
+		DebugF(errmsg)
 		return errors.New(errmsg)
 	}
 
 	if !isExported(sname) {
 		errmsg := "rpc.Register: type " + sname + " is not exported"
-		log.Print(errmsg)
+		// log.Print(errmsg)
+		DebugF(errmsg)
 		return errors.New(errmsg)
 	}
 	srvic.name = sname
@@ -80,13 +85,13 @@ func (s *Server) RegisterName(rcvr interface{}, methodName string) error {
 	} else {
 		if sname == "" {
 			errmsg := "rpc.Register: no service name for type " + srvic.typ.String()
-			log.Print(errmsg)
+			DebugF(errmsg)
 			return errors.New(errmsg)
 		}
 
 		if !isExported(sname) {
 			errmsg := "rpc.Register: type " + sname + " is not exported"
-			log.Print(errmsg)
+			DebugF(errmsg)
 			return errors.New(errmsg)
 		}
 		srvic.name = sname
@@ -99,138 +104,144 @@ func (s *Server) RegisterName(rcvr interface{}, methodName string) error {
 
 // before Call must parse and decode param into reflect.Value
 // after Call must encode and response
-func (s *Server) call(req Request) Response {
-	defer func() { debugF("server called end") }()
-	reqMethod := req.Method()
+func (s *Server) call(reqs []Request) (replies []Response) {
+	defer func() { DebugF("server called end") }()
+	replies = make([]Response, len(reqs))
+	for idx, req := range reqs {
+		var (
+			reply Response
+		)
 
-	dot := strings.LastIndex(reqMethod, ".") // split req.Method like "type.Method"
-	if dot < 0 {
-		return &defaultResponse{Err: "rpc: service/method request ill-formed: " + reqMethod, Errcode: InvalidRequest}
+		serviceName, methodName, err := parseFromRPCMethod(req.Method())
+		if err != nil {
+			DebugF("parseFromRPCMethod err=%v", err)
+			reply = s.codec.ErrResponse(InvalidRequest, err)
+			replies[idx] = reply
+			continue
+			// goto errSkip
+		}
+
+		// method existed or not
+		svci, ok := s.m.Load(serviceName)
+		if !ok {
+			err := errors.New("rpc: can't find service " + serviceName)
+			reply = s.codec.ErrResponse(MethodNotFound, err)
+			replies[idx] = reply
+			continue
+		}
+
+		svc := svci.(*service)
+		mtype := svc.method[methodName]
+		if mtype == nil {
+			err := errors.New("rpc: can't find method " + req.Method())
+			reply = s.codec.ErrResponse(MethodNotFound, err)
+			replies[idx] = reply
+			continue
+		}
+
+		// To prepare argv and replyv in reflect.Value. Refer to `net/http/rpc`
+		// If true, need to indirect before calling.
+		var (
+			argv       reflect.Value
+			argIsValue = false
+		)
+		if mtype.ArgType.Kind() == reflect.Ptr {
+			argv = reflect.New(mtype.ArgType.Elem())
+		} else {
+			argv = reflect.New(mtype.ArgType)
+			argIsValue = true
+		}
+		if argIsValue {
+			argv = argv.Elem() // argv guaranteed to be a pointer now.
+		}
+
+		if err := s.codec.ReadRequestBody(req.Params(), argv.Interface()); err != nil {
+			DebugF("could not readRequestBody err=%v", err)
+			err := errors.New("rpc: could not read request body " + req.Method())
+			reply = s.codec.ErrResponse(InternalErr, err)
+			replies[idx] = reply
+			continue
+		}
+
+		var replyv reflect.Value
+		replyv = reflect.New(mtype.ReplyType.Elem())
+		switch mtype.ReplyType.Elem().Kind() {
+		case reflect.Map:
+			replyv.Elem().Set(reflect.MakeMap(mtype.ReplyType.Elem()))
+		case reflect.Slice:
+			replyv.Elem().Set(reflect.MakeSlice(mtype.ReplyType.Elem(), 0, 0))
+		}
+
+		if err := svc.call(mtype, argv, replyv); err != nil {
+			reply = s.codec.ErrResponse(InternalErr, err)
+		} else {
+			// normal response
+			reply = s.codec.NewResponse(replyv.Interface())
+		}
+
+		replies[idx] = reply
 	}
+	// for req range reqs. END
 
-	serviceName := reqMethod[:dot]
-	methodName := reqMethod[dot+1:]
-
-	// method existed or not
-	svci, ok := s.m.Load(serviceName)
-	if !ok {
-		return &defaultResponse{Err: "rpc: can't find service " + reqMethod, Errcode: MethodNotFound}
-	}
-	svc := svci.(*service)
-	mtype := svc.method[methodName]
-	if mtype == nil {
-		return &defaultResponse{Err: "rpc: can't find method " + reqMethod, Errcode: MethodNotFound}
-	}
-
-	// to prepare argv and replyv in reflect.Value
-	// ref to `net/http/rpc`
-	argIsValue := false // if true, need to indirect before calling.
-	var argv reflect.Value
-	if mtype.ArgType.Kind() == reflect.Ptr {
-		argv = reflect.New(mtype.ArgType.Elem())
-	} else {
-		argv = reflect.New(mtype.ArgType)
-		argIsValue = true
-	}
-
-	// argv guaranteed to be a pointer now.
-	if argIsValue {
-		argv = argv.Elem()
-	}
-
-	if err := s.codec.Decode(req.Params(s.codec), argv.Interface()); err != nil {
-		debugF("s.call decode params err: %v, %s", err, string(req.Params(s.codec)))
-		return &defaultResponse{Err: err.Error(), Errcode: InvalidParamErr}
-	}
-	// convert(req.Params, argv.Interface())
-	// fmt.Println(argv.Interface())
-
-	replyv := reflect.New(mtype.ReplyType.Elem())
-	switch mtype.ReplyType.Elem().Kind() {
-	case reflect.Map:
-		replyv.Elem().Set(reflect.MakeMap(mtype.ReplyType.Elem()))
-	case reflect.Slice:
-		replyv.Elem().Set(reflect.MakeSlice(mtype.ReplyType.Elem(), 0, 0))
-	}
-
-	if err := svc.call(mtype, argv, replyv); err != nil {
-		return &defaultResponse{Err: err.Error(), Errcode: InternalErr}
-	}
-
-	byts, err := s.codec.Encode(replyv.Interface())
-	if err != nil {
-		return &defaultResponse{Err: err.Error(), Errcode: InternalErr}
-	}
-	debugF("s.call got %v, encoded to be: %s", replyv.Interface(), byts)
-
-	return &defaultResponse{Err: "", Rply: byts, Errcode: SUCCESS}
-}
-
-// handleConn to recive a conn,
-// parse Request and then transfer to call.
-func (s *Server) handleConn(conn net.Conn) {
-	// receive a request
-	data, err := bufio.NewReader(conn).ReadBytes('\n')
-	debugF("recv a new request: %s", data)
-
-	if err != nil {
-		debugF("response to client connection err: %v", err)
-		resp := s.codec.Response(nil, nil, InternalErr)
-		utils.WriteServerTCP(conn, encodeResponse(s.codec, resp))
-		return
-	}
-
-	req, err := s.codec.ParseRequest(data)
-	if err != nil {
-		resp := s.codec.Response(nil, nil, ParseErr)
-		utils.WriteServerTCP(conn, encodeResponse(s.codec, resp))
-		return
-	}
-	debugF("[TCP] recv a new request: %v, params: %s", req, req.Params(s.codec))
-
-	// hanlde multi request
-	if !req.HasNext() {
-		r := s.call(req)
-		debugF("[single]s.call(req) req: %v result: %s", req, r)
-		r2 := s.codec.Response(req, r.Reply(s.codec), r.ErrCode())
-		utils.WriteServerTCP(conn, encodeResponse(s.codec, r2))
-		return
-	}
-
-	// for multi req
-	resps := make([]Response, 0)
-	for req.HasNext() {
-		nextreq := req.Next().(Request)
-		r := s.call(nextreq)
-		resps = append(resps, s.codec.Response(nextreq, r.Reply(s.codec), r.ErrCode()))
-		debugF("[multi] req.Next() %v, params: %v, result: %s", nextreq, nextreq.Params(s.codec), r)
-	}
-	utils.WriteServerTCP(conn,
-		encodeResponse(s.codec, s.codec.ResponseMulti(resps)))
 	return
 }
 
-// Start open tcp and http to serve request,
-// open or not depends on that is addr an empty string,
-// you can also open tcp by s.ServeTCP(addr), at the same time
-// open http by s.ListenAndServe(addr)
-func (s *Server) Start(tcpAddr, httpAddr string) {
-	wait := make(chan bool)
-	if httpAddr != "" {
-		go s.ListenAndServe(httpAddr)
+// serveConn to recive a conn,
+// parse NewRequest and then transfer to call.
+func (s *Server) serveConn(conn net.Conn) {
+	// receive a request
+	// data, err := bufio.NewReader(conn).ReadBytes('\n')
+	rr := bufio.NewReader(conn)
+	wr := bufio.NewWriter(conn)
+	var (
+		precv = proto.New()
+		psend = proto.New()
+	)
+
+	if err := precv.ReadTCP(rr); err != nil {
+		DebugF("response to client connection err: %v", err)
+		// resp := s.codec.ReadResponse()(nil, nil, InternalErr)
+		// psend.Body = encodeResponse(s.codec, resp)
+		// psend.WriteTCP(wr)
+		// wr.Flush()
+		// utils.WriteServerTCP(conn, encodeResponse(s.codec, resp))
+		return
 	}
 
-	if tcpAddr != "" {
-		go s.ServeTCP(tcpAddr)
-	}
+	DebugF("recv a new request: %v", precv.Body)
+	reqs, err := s.codec.ReadRequest(precv.Body)
+	if err != nil {
+		DebugF("could not parse request: %v", err)
+		resp := s.codec.ErrResponse(ParseErr, err)
+		if psend.Body, err = s.codec.EncodeResponses([]Response{resp}); err != nil {
+			DebugF("could not encode responses, err=%v", err)
+			return
+		}
 
-	<-wait
+		psend.WriteTCP(wr)
+		wr.Flush()
+		// utils.WriteServerTCP(conn, encodeResponse(s.codec, resp))
+		return
+	}
+	// DebugF("[TCP] recv a new request: %v, params: %v", req, req.Params(s.codec))
+	// DebugF("[TCP] recv a new request: %v, params: %v", req, req.Params())
+
+	resps := s.call(reqs)
+	DebugF("s.call(req) req: %v result: %v", reqs, resps)
+	// resp := s.codec.NewResponse(req, result.Reply(), result.ErrCode())
+	if psend.Body, err = s.codec.EncodeResponses(resps); err != nil {
+		DebugF("could not encode responses, err=%v", err)
+		return
+	}
+	psend.WriteTCP(wr)
+	wr.Flush()
+	return
 }
 
 // ServeTCP Dealing with request
 // decode and Call and response
 func (s *Server) ServeTCP(addr string) {
-	debugF("RPC server over TCP is listening: %s", addr)
+	DebugF("RPC server over TCP is listening: %s", addr)
 
 	// make a listener over TCP
 	listener, err := net.Listen("tcp", addr)
@@ -241,22 +252,21 @@ func (s *Server) ServeTCP(addr string) {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
-			log.Println(err.Error())
+			DebugF("listener.Accept(), err=%v", err)
 			continue
 		}
-		// TODO: pool goroutine
-		go s.handleConn(conn)
+		// TODO: goroutine pool
+		go s.serveConn(conn)
 	}
 }
 
 // ListenAndServe open http support can serve http request
 func (s *Server) ListenAndServe(addr string) {
-	debugF("RPC server over HTTP is listening: %s", addr)
-
-	// TODO: replace timeout to s.codec.Response(timeoutErr).String()
-	timeoutHdl := http.TimeoutHandler(s, 5*time.Second, "timeout")
-
-	if err := http.ListenAndServe(addr, timeoutHdl); err != nil {
+	log.Printf("RPC server over HTTP is listening: %s", addr)
+	if err := http.ListenAndServe(
+		addr,
+		http.TimeoutHandler(s, 5*time.Second, "timeout"),
+	); err != nil {
 		panic(err)
 	}
 }
@@ -265,75 +275,70 @@ func (s *Server) ListenAndServe(addr string) {
 // it also implement the interface of http.Handler
 func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	defer func() {
-		v := recover()
-		if err, ok := v.(error); ok && err != nil {
-			log.Printf("%v", err)
+		if err, ok := recover().(error); ok && err != nil {
+			// log.Printf("%v", err)
+			DebugF("[ServeHTTP] recover %v with stack: \n", err)
+			debug.PrintStack()
 		}
 	}()
 
+	var (
+		data []byte
+		err  error
+	)
 	switch req.Method {
-	case http.MethodGet, http.MethodPost:
-		req.ParseForm()
+	case http.MethodPost:
+		if data, err = ioutil.ReadAll(req.Body); err != nil {
+			resp := s.codec.ErrResponse(InvalidParamErr, err)
+			JSON(w, http.StatusOK, resp)
+			return
+		}
+		defer req.Body.Close()
 	default:
-		resp := s.codec.Response(nil, nil, MethodNotFound)
-		utils.ResponseHTTP(w, encodeResponse(s.codec, resp), isDebug)
+		err := errors.New("method not allowed: " + req.Method)
+		resp := s.codec.ErrResponse(MethodNotFound, err)
+		JSON(w, http.StatusOK, resp)
 		return
 	}
 
-	data := req.Form.Get("data")
-	if len(data) == 0 {
-		resp := s.codec.Response(nil, nil, InvalidParamErr)
-		utils.ResponseHTTP(w, encodeResponse(s.codec, resp), isDebug)
-		return
-	}
-	debugF("[HTTP] got request data: %s", data)
-
-	rpcReq, err := s.codec.ParseRequest([]byte(data))
+	DebugF("[HTTP] got request data: %v", data)
+	rpcReqs, err := s.codec.ReadRequest([]byte(data))
 	if err != nil {
-		resp := s.codec.Response(nil, nil, ParseErr)
-		utils.ResponseHTTP(w, encodeResponse(s.codec, resp), isDebug)
+		resp := s.codec.ErrResponse(ParseErr, err)
+		JSON(w, http.StatusOK, resp)
 		return
 	}
 
-	if !rpcReq.HasNext() {
-		r := s.call(rpcReq)
-		resp := s.codec.Response(rpcReq, r.Reply(s.codec), r.ErrCode())
-		debugF("s.call(rpcReq) result: %s", resp)
-		utils.ResponseHTTP(w, encodeResponse(s.codec, resp), isDebug)
-		return
-	}
-
-	// multi request support
-	resps := make([]Response, 0)
-	for rpcReq.HasNext() {
-		nextreq := rpcReq.Next().(Request)
-		r := s.call(nextreq)
-		resps = append(resps, s.codec.Response(nextreq, r.Reply(s.codec), r.ErrCode()))
-	}
-
-	utils.ResponseHTTP(w,
-		encodeResponse(s.codec, s.codec.ResponseMulti(resps)), isDebug)
+	resps := s.call(rpcReqs)
+	DebugF("s.call(rpcReq) result: %s", resps)
+	JSON(w, http.StatusOK, resps)
 	return
 }
 
-// encodeResponse ...
-func encodeResponse(codec Codec, resp Response) []byte {
-	byts, err := codec.Encode(resp)
+// JSON .
+func JSON(w http.ResponseWriter, statusCode int, v interface{}) error {
+	w.WriteHeader(statusCode)
+	w.Header().Set("Content-Type", "application/json")
+	byts, err := json.Marshal(v)
 	if err != nil {
-		panic(err)
+		DebugF("could not marshal v=%v, err=%v", v, err)
+		return err
 	}
-	debugF("encodeResponse: origin %v, encoded: %s", resp, byts)
 
-	return byts
+	_, err = io.WriteString(w, string(byts))
+	return err
 }
 
-// encodeMultiResponse ...
-// func encodeMultiResponse(codec Codec, resps []Response) []byte {
-// 	byts, err := codec.Encode(resps)
-// 	if err != nil {
-// 		panic(err)
-// 	}
-// 	debugF("encodeMultiResponse: origin %v, encoded: %s", resps, byts)
+// String .
+func String(w http.ResponseWriter, statusCode int, byts []byte) error {
+	w.WriteHeader(statusCode)
+	w.Header().Set("Content-Type", "text/plain")
+	// byts, err := json.Marshal(v)
+	// if err != nil {
+	// 	DebugF("could not marshal v=%v, err=%v", v, err)
+	// 	return err
+	// }
 
-// 	return byts
-// }
+	_, err := io.WriteString(w, string(byts))
+	return err
+}

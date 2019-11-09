@@ -66,7 +66,7 @@ func testAddOverTCP(c *rpc.Client) {
 		sum  int
 		args = &Args{A: 1, B: 222}
 	)
-	if err := c.CallOverTCP("Int.Add", args, &sum); err != nil {
+	if err := c.TCP("Int.Add", args, &sum); err != nil {
 		println("got err: ", err.Error())
 	}
 
@@ -78,7 +78,7 @@ func testAddOverHTTP(c *rpc.Client) {
 		sum  int
 		args = &Args{A: 1111, B: 222}
 	)
-	if err := c.CallOverHTTP("Int.Add", args, &sum); err != nil {
+	if err := c.HTTP("Int.Add", args, &sum); err != nil {
 		println("got err: ", err.Error())
 	}
 

@@ -1,5 +1,5 @@
 # RPC lib based Golang
-[![Go Report Card](https://goreportcard.com/badge/github.com/yeqown/rpc)](https://goreportcard.com/report/github.com/yeqown/rpc) [![GoReportCard](https://godoc.org/github.com/yeqown/rpc?status.svg)](https://godoc.org/github.com/yeqown/rpc)
+[![Go Report Card](https://goreportcard.com/badge/github.com/yeqown/rpc)](https://goreportcard.com/report/github.com/yeqown/rpc) [![](https://godoc.org/github.com/yeqown/rpc?status.svg)](https://godoc.org/github.com/yeqown/rpc)
 
 In distributed computing, a remote procedure call (RPC) is when a computer program causes a procedure (subroutine) to execute in a different address space (commonly on another computer on a shared network), which is coded as if it were a normal (local) procedure call, without the programmer explicitly coding the details for the remote interaction. That is, the programmer writes essentially the same code whether the subroutine is local to the executing program, or remote. This is a form of client–server interaction (caller is client, executor is server), typically implemented via a request–response message-passing system. In the object-oriented programming paradigm, RPC calls are represented by remote method invocation (RMI). The RPC model implies a level of location transparency, namely that calling procedures is largely the same whether it is local or remote, but usually they are not identical, so local calls can be distinguished from remote calls. Remote calls are usually orders of magnitude slower and less reliable than local calls, so distinguishing them is important.
 
@@ -29,26 +29,26 @@ type Codec interface {
 	Decode(data []byte, argv interface{}) error
 
 	// generate a single Response with needed params
-	Response(req Request, reply []byte, errcode int) Response
+	NewResponse(req NewRequest, reply []byte, errcode int) Response
 
 	// parse encoded data into a Response
-	ParseResponse(respBody []byte) (Response, error)
+	ReadResponse(respBody []byte) (Response, error)
 
-	// generate a single Request with needed params
-	Request(method string, argv interface{}) Request
+	// generate a single NewRequest with needed params
+	NewRequest(method string, argv interface{}) NewRequest
 
-	// parse encoded data into a Request
-	ParseRequest(data []byte) (Request, error)
+	// parse encoded data into a NewRequest
+	ReadRequest(data []byte) (NewRequest, error)
 
 	// if MultiSupported return true means, can provide funcs
-	// ResponseMulti, ParseResponseMulti, RequestMulti, ParseRequestMulti
+	// ResponseMulti, ParseResponseMulti, NewRequests, ParseRequestMulti
 	MultiSupported() bool
 
 	// generate a Response which cann support Iter(iterator interface)
-	ResponseMulti(resps []Response) Response
+	NewResponses(resps []Response) Response
 
-	// generate a Request which cann support Iter(iterator interface)
-	RequestMulti(cfgs []*RequestConfig) Request
+	// generate a NewRequest which cann support Iter(iterator interface)
+	NewRequests(cfgs []*RequestConfig) NewRequest
 }
 ```
 
@@ -84,9 +84,9 @@ cfgs := []*rpc.RequestConfig{
 		Reply:  &Result{},
 	},
 }
-// c.CallOverTCPMulti(cfgs) is ok too
-if err := c.CallOverHTTPMulti(cfgs); err != nil {
-	log.Printf("c.CallOverHTTPMulti client got err: %v", err)
+// c.TCPM(cfgs) is ok too
+if err := c.HTTPM(cfgs); err != nil {
+	log.Printf("c.HTTPM client got err: %v", err)
 }
 ```
 
@@ -110,7 +110,7 @@ func (s *Server) ServeTCP(tcpAddr string)
 
 `ServeHTTP` to implement `http.Handler` interface so that the server can serve with *HTTP* request
 ```go
-func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request)
+func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.NewRequest)
 ```
 
 `ListenAndServe` to run an http server and handle each request
@@ -125,24 +125,24 @@ func (s *Server) Start(tcpAddr, httpAddr string)
 
 #### Client Side API
 
-`CallOverTCP` call `method` with `argv` and return value into `reply` over *TCP*
+`TCP` call `method` with `argv` and return value into `reply` over *TCP*
 ```go
-func (c *Client) CallOverTCP(method string, argv, reply interface{})
+func (c *Client) TCP(method string, argv, reply interface{})
 ```
 
-`CallOverTCPMulti` send multi request to server configed by `cfgs`, get result form `cfg.Reply`
+`TCPM` send multi request to server configed by `cfgs`, get result form `cfg.Reply`
 ```go
-func (c *Client) CallOverTCPMulti(cfgs []*RequestConfig)
+func (c *Client) TCPM(cfgs []*RequestConfig)
 ```
 
-`CallOverHTTP` work like `CallOverTCP`, the difference is over *HTTP* rather than *TCP*
+`HTTP` work like `TCP`, the difference is over *HTTP* rather than *TCP*
 ```go
-func (c *Client) CallOverHTTP(method string, argv, reply interface{})
+func (c *Client) HTTP(method string, argv, reply interface{})
 ```
 
-`CallOverHTTPMulti` works like `CallOverTCPMulti`
+`HTTPM` works like `TCPM`
 ```go
-func (c *Client) CallOverHTTPMulti(tcpAddr, httpAddr string)
+func (c *Client) HTTPM(tcpAddr, httpAddr string)
 ```
 
 `Close` `c.conn` (tcp connection)

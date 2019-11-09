@@ -2,7 +2,6 @@ package rpc
 
 import (
 	"bytes"
-	"encoding/base64"
 	"encoding/gob"
 	"fmt"
 )
@@ -11,116 +10,138 @@ var (
 	_ Codec = &gobCodec{}
 )
 
+func init() {
+	gob.Register([]*stdRequest{})
+	gob.Register([]*stdResponse{})
+
+	gob.Register(&stdRequest{})
+	gob.Register(&stdResponse{})
+}
+
 // Codec ... to encode and decode
 // for client to encode request and decode response
 // for server to encode response den decode request
 type Codec interface {
-	// Encode an interface value into []byte
-	Encode(argv interface{}) ([]byte, error)
-
-	// Decode encoded data([]byte) back to an interface which the origin data belongs to
-	Decode(data []byte, argv interface{}) error
-
 	// generate a single Response with needed params
-	Response(req Request, reply []byte, errcode int) Response
+	NewResponse(replyv interface{}) Response
+
+	// ErrResponse to generate a Reponse contains error
+	ErrResponse(errcode int, err error) Response
 
 	// parse encoded data into a Response
-	ParseResponse(respBody []byte) (Response, error)
+	ReadResponse(data []byte) ([]Response, error)
 
-	// generate a single Request with needed params
-	Request(method string, argv interface{}) Request
+	// ReadResponseBody .
+	ReadResponseBody(respBody []byte, rcvr interface{}) error
+
+	// EncodeResponses .
+	EncodeResponses(v interface{}) ([]byte, error)
+
+	// generate a single NewRequest with needed params
+	NewRequest(method string, argv interface{}) Request
 
 	// parse encoded data into a Request
-	ParseRequest(data []byte) (Request, error)
+	ReadRequest(data []byte) ([]Request, error)
 
-	// if MultiSupported return true means, can provide funcs
-	// ResponseMulti, ParseResponseMulti, RequestMulti, ParseRequestMulti
-	MultiSupported() bool
+	// ReadRequestBody parse params
+	ReadRequestBody(reqBody []byte, rcvr interface{}) error
 
-	// generate a Response which cann support Iter(iterator interface)
-	ResponseMulti(resps []Response) Response
-
-	// generate a Request which cann support Iter(iterator interface)
-	RequestMulti(cfgs []*RequestConfig) Request
+	// EncodeRequests .
+	EncodeRequests(v interface{}) ([]byte, error)
 }
+
+// // ServerCodec .
+// // parse request and write response to client.
+// type ServerCodec interface {
+// 	ParseRequest(d []byte)
+// 	ReadRequestBody(req Request, rcvr interface{}) error
+// }
+
+// // ClientCodec .
+// type ClientCodec interface {
+// 	NewRequest(argv interface{}) (Request, error)
+// 	ReadResponse(d []byte, v Response) error
+// }
 
 // NewGobCodec to generate a new gobCodec instance
 func NewGobCodec() Codec {
-	encBuf := bytes.NewBuffer(nil)
-	decBuf := bytes.NewBuffer(nil)
+	// encBuf := bytes.NewBuffer(nil)
+	// decBuf := bytes.NewBuffer(nil)
 
 	codec := &gobCodec{
-		encBuf: encBuf,
-		enc:    gob.NewEncoder(encBuf),
-		decBuf: decBuf,
-		dec:    gob.NewDecoder(decBuf),
+		// encBuf: encBuf,
+		// enc:    gob.NewEncoder(encBuf),
+		// decBuf: decBuf,
+		// dec:    gob.NewDecoder(decBuf),
 	}
 	return codec
 }
 
 // gobCodec using gob to serail
 type gobCodec struct {
-	decBuf *bytes.Buffer
-	dec    *gob.Decoder
-	encBuf *bytes.Buffer
-	enc    *gob.Encoder
+	// decBuf *bytes.Buffer
+	// dec    *gob.Decoder
+	// encBuf *bytes.Buffer
+	// enc    *gob.Encoder
 }
 
 func (g *gobCodec) Encode(argv interface{}) ([]byte, error) {
-	g.encBuf.Reset()
-	g.enc = gob.NewEncoder(g.encBuf)
+	buf := bytes.NewBuffer(nil)
+	enc := gob.NewEncoder(buf)
 
-	if err := g.enc.Encode(argv); err != nil {
+	if err := enc.Encode(argv); err != nil {
 		return nil, fmt.Errorf("g.enc.Encode(argv) got err: %v", err)
 	}
 
-	src := g.encBuf.Bytes()
-	bas64Dst := make([]byte, base64.StdEncoding.EncodedLen(len(src)))
-	base64.StdEncoding.Encode(bas64Dst, src)
-
-	return bas64Dst, nil
+	return buf.Bytes(), nil
 }
 
 func (g *gobCodec) Decode(data []byte, out interface{}) error {
-	g.decBuf.Reset()
-	g.dec = gob.NewDecoder(g.decBuf)
+	buf := bytes.NewBuffer(data)
+	dec := gob.NewDecoder(buf)
 
-	base64Dst := make([]byte, base64.StdEncoding.DecodedLen(len(data)))
-	if _, err := base64.StdEncoding.Decode(base64Dst, data); err != nil {
-		return fmt.Errorf("hex.Decode(base64Dst, data) got err: %v", err)
-	}
-
-	if _, err := g.decBuf.Write(base64Dst); err != nil {
-		return fmt.Errorf("g.decBuf.Write(base64Dst) got err: %v", err)
-	}
-
-	if err := g.dec.Decode(out); err != nil {
-		return fmt.Errorf("g.dec.Decode(out) got err: %v", err)
+	if err := dec.Decode(out); err != nil {
+		return fmt.Errorf("[Decode] got err: %v", err)
 	}
 
 	return nil
 }
 
-// Request ...
-func (g *gobCodec) Response(req Request, reply []byte, errcode int) Response {
-	resp := new(defaultResponse)
-	if errcode != SUCCESS {
-		resp.Err = errcodeMap[errcode].Error()
-	} else {
-		resp.Rply = reply
+// NewRequest ...
+func (g *gobCodec) NewResponse(replyv interface{}) Response {
+	// resp := new(stdResponse)
+	byts, err := g.Encode(replyv)
+	if err != nil {
+		DebugF("[NewResponse] could not encode replyv=%v, err=%v", replyv, err)
+		return nil
+	}
+	resp := &stdResponse{
+		Rply:    byts,
+		Err:     "",
+		Errcode: Success,
 	}
 
 	return resp
 }
 
-// Request ...
-func (g *gobCodec) Request(method string, argv interface{}) Request {
+// ErrResponse .
+func (g *gobCodec) ErrResponse(errcode int, err error) Response {
+	resp := &stdResponse{
+		Err:     err.Error(),
+		Errcode: errcode,
+	}
+	return resp
+}
+
+// NewRequest ...
+func (g *gobCodec) NewRequest(method string, argv interface{}) Request {
 	byts, err := g.Encode(argv)
 	if err != nil {
-		panic(err)
+		DebugF("could not encode argv, err=%v", err)
+		return nil
 	}
 
-	req := &defaultRequest{
+	req := &stdRequest{
 		Mthd: method,
 		Args: byts,
 	}
@@ -128,24 +149,53 @@ func (g *gobCodec) Request(method string, argv interface{}) Request {
 	return req
 }
 
-// ParseRequest ...
-func (g *gobCodec) ParseRequest(data []byte) (Request, error) {
-	req := new(defaultRequest)
-	if err := g.Decode(data, req); err != nil {
+// ReadRequest ...
+func (g *gobCodec) ReadRequest(data []byte) ([]Request, error) {
+	reqs := make([]Request, 0)
+	if err := g.Decode(data, &reqs); err != nil {
+		DebugF("[ReadRequest] could not g.Decode(data, stdreqs), err=%v", err)
 		return nil, err
 	}
-	return req, nil
+
+	return reqs, nil
+	// reqs := make([]Request, len(stdreqs))
+	// for idx, v := range stdreqs {
+	// 	reqs[idx] = v
+	// }
+
+	// return reqs, nil
 }
 
-// ParseResponse ...
-func (g *gobCodec) ParseResponse(data []byte) (Response, error) {
-	resp := new(defaultResponse)
-	if err := g.Decode(data, resp); err != nil {
+func (g *gobCodec) ReadResponseBody(respBody []byte, rcvr interface{}) error {
+	return g.Decode(respBody, rcvr)
+}
+
+// ReadRequestBody .
+func (g *gobCodec) ReadRequestBody(reqBody []byte, rcvr interface{}) error {
+	return g.Decode(reqBody, rcvr)
+}
+
+// ReadResponse ...
+func (g *gobCodec) ReadResponse(data []byte) ([]Response, error) {
+	// DebugF("read response: %v", data)
+	resps := make([]Response, 0)
+	if err := g.Decode(data, &resps); err != nil {
 		return nil, fmt.Errorf("could not decode response: %v", err)
 	}
-	return resp, nil
+
+	// resps := make([]Response, len(stdresps))
+	// for idx, v := range stdresps {
+	// 	resps[idx] = v
+	// }
+	return resps, nil
 }
 
-func (g *gobCodec) MultiSupported() bool                       { return false }
-func (g *gobCodec) ResponseMulti(resps []Response) Response    { return nil }
-func (g *gobCodec) RequestMulti(cfgs []*RequestConfig) Request { return nil }
+// EncodeResponses .
+func (g *gobCodec) EncodeResponses(v interface{}) ([]byte, error) {
+	return g.Encode(v)
+}
+
+// EncodeRequests .
+func (g *gobCodec) EncodeRequests(v interface{}) ([]byte, error) {
+	return g.Encode(v)
+}
