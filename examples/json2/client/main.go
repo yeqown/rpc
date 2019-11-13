@@ -20,8 +20,7 @@ type Result struct {
 }
 
 func main() {
-	c := rpc.NewClientWithCodec(jsonrpc.NewJSONCodec(), "127.0.0.1:9998", "127.0.0.1:9999")
-	// c := rpc.NewClientWithCodec(json2.NewStdJSONCodec(), "127.0.0.1:9998", "127.0.0.1:9999")
+	c := rpc.NewClientWithCodec(jsonrpc.NewJSONCodec(), "127.0.0.1:9998")
 
 	testAddOverTCP(c)
 	// testAddOverHTTP(c)

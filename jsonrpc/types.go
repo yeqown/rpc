@@ -31,7 +31,7 @@ type jsonRequest struct {
 	Version string      `json:"jsonrpc"`
 }
 
-func (j *jsonRequest) GetID() string  { return j.ID }
+func (j *jsonRequest) Ident() string  { return j.ID }
 func (j *jsonRequest) Method() string { return j.Mthd }
 func (j *jsonRequest) Params() []byte {
 	byts, err := json.Marshal(j.Args)
@@ -50,19 +50,14 @@ type jsonResponse struct {
 	Version string      `json:"jsonrpc"`
 }
 
-func (j *jsonResponse) GetID() string { return j.ID }
+func (j *jsonResponse) SetReqIdent(ident string) { j.ID = ident }
+func (j *jsonResponse) Error() error             { return j.Err }
 func (j *jsonResponse) Reply() []byte {
 	byts, err := json.Marshal(j.Result)
 	if err != nil {
 		panic(err)
 	}
 	return byts
-}
-func (j *jsonResponse) Error() error {
-	if j.Err == nil {
-		return nil
-	}
-	return errcodeMap[j.Err.Code]
 }
 func (j *jsonResponse) ErrCode() int {
 	if j.Err == nil {

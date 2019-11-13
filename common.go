@@ -22,6 +22,9 @@ type Request interface {
 	// all these origin params (interface{} type)
 	// should be result of codec encoded
 	Params() []byte
+
+	// Ident to get indentify of request
+	Ident() string
 }
 
 // Response interface contains necessary methods
@@ -37,6 +40,9 @@ type Response interface {
 	// all these response data (interface{} type)
 	// should be result of codec encoded
 	Reply() []byte
+
+	// SetReqIdent .
+	SetReqIdent(ident string)
 }
 
 type stdRequest struct {
@@ -49,6 +55,7 @@ type stdRequest struct {
 
 func (d *stdRequest) Method() string { return d.Mthd }
 func (d *stdRequest) Params() []byte { return d.Args }
+func (d *stdRequest) Ident() string  { return "" }
 
 type stdResponse struct {
 	Rply    []byte
@@ -63,8 +70,9 @@ func (d *stdResponse) Error() error {
 	return errors.New(d.Err)
 }
 
-func (d *stdResponse) Reply() []byte { return d.Rply }
-func (d *stdResponse) ErrCode() int  { return d.Errcode }
+func (d *stdResponse) Reply() []byte            { return d.Rply }
+func (d *stdResponse) ErrCode() int             { return d.Errcode }
+func (d *stdResponse) SetReqIdent(ident string) { /* nothing */ }
 
 // parseFromRPCMethod .
 // split req.Method like "type.Method"

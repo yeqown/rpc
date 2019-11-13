@@ -13,7 +13,7 @@ type Args struct {
 }
 
 func main() {
-	c := rpc.NewClientWithCodec(nil, "127.0.0.1:9998", "127.0.0.1:9999")
+	c := rpc.NewClientWithCodec(nil, "127.0.0.1:9998")
 	testAddOverTCP(c)
 	// testAddOverHTTP(c)
 }

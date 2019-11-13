@@ -55,12 +55,11 @@ func (j *jsonCodec) decode(data []byte, out interface{}) error {
 	return j.dec.Decode(out)
 }
 
-// TODO: copy from request.id
 func (j *jsonCodec) NewResponse(reply interface{}) rpc.Response {
 	resp := &jsonResponse{
-		Version: VERSIONCODE,
-		ID:      "",
-		Result:  reply,
+		Version: VERSIONCODE, // this is a dead string '2.0'
+		ID:      "",          // this will be set in server side
+		Result:  reply,       // interface{}
 	}
 
 	return resp
@@ -81,7 +80,6 @@ func (j *jsonCodec) ErrResponse(errcode int, err error) rpc.Response {
 	}
 }
 
-// TODO: deal with many request
 func (j *jsonCodec) NewRequest(method string, argv interface{}) rpc.Request {
 	req := &jsonRequest{
 		ID:      randid(),

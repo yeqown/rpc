@@ -22,71 +22,37 @@ In distributed computing, a remote procedure call (RPC) is when a computer progr
 // for client to encode request and decode response
 // for server to encode response den decode request
 type Codec interface {
-	// Encode an interface value into []byte
-	Encode(argv interface{}) ([]byte, error)
+	ServerCodec
+	ClientCodec
+}
 
-	// Decode encoded data([]byte) back to an interface which the origin data belongs to
-	Decode(data []byte, argv interface{}) error
 
+// ServerCodec .
+// parse request and write response to client.
+type ServerCodec interface {
+	// parse encoded data into a Request
+	ReadRequest(data []byte) ([]Request, error)
+	// ReadRequestBody parse params
+	ReadRequestBody(reqBody []byte, rcvr interface{}) error
 	// generate a single Response with needed params
-	NewResponse(req NewRequest, reply []byte, errcode int) Response
+	NewResponse(replyv interface{}) Response
+	// ErrResponse to generate a Reponse contains error
+	ErrResponse(errcode int, err error) Response
+	// EncodeResponses .
+	EncodeResponses(v interface{}) ([]byte, error)
+}
 
-	// parse encoded data into a Response
-	ReadResponse(respBody []byte) (Response, error)
-
+// ClientCodec .
+// prase response and write request to server
+type ClientCodec interface {
 	// generate a single NewRequest with needed params
-	NewRequest(method string, argv interface{}) NewRequest
-
-	// parse encoded data into a NewRequest
-	ReadRequest(data []byte) (NewRequest, error)
-
-	// if MultiSupported return true means, can provide funcs
-	// ResponseMulti, ParseResponseMulti, NewRequests, ParseRequestMulti
-	MultiSupported() bool
-
-	// generate a Response which cann support Iter(iterator interface)
-	NewResponses(resps []Response) Response
-
-	// generate a NewRequest which cann support Iter(iterator interface)
-	NewRequests(cfgs []*RequestConfig) NewRequest
-}
-```
-
-#### About struct `RequestConfig`
-
-`RequestConfig` is a data structure to call multiple request config, it contains:
-```go
-// RequestConfig ... to support request multi
-type RequestConfig struct {
-	// Method that called by client, if not existed will recv an err.
-	Method string
-
-	// Args should be params pointer type
-	Args interface{}
-
-	// Reply shoule be result pointer type
-	Reply interface{}
-}
-```
-
-use this config while needing send a multi request at one time, just like this:
-
-```go
-cfgs := []*rpc.RequestConfig{
-	&rpc.RequestConfig{
-		Method: "Int.Add",
-		Args:   &Args{10, 1909},
-		Reply:  &Result{},
-	},
-	&rpc.RequestConfig{
-		Method: "Int.Sum",
-		Args:   &Args{21312, 1909},
-		Reply:  &Result{},
-	},
-}
-// c.TCPM(cfgs) is ok too
-if err := c.HTTPM(cfgs); err != nil {
-	log.Printf("c.HTTPM client got err: %v", err)
+	NewRequest(method string, argv interface{}) Request
+	// EncodeRequests .
+	EncodeRequests(v interface{}) ([]byte, error)
+	// parse encoded data into a Response
+	ReadResponse(data []byte) ([]Response, error)
+	// ReadResponseBody .
+	ReadResponseBody(respBody []byte, rcvr interface{}) error
 }
 ```
 
@@ -118,31 +84,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.NewRequest)
 func (s *Server) ListenAndServe(httpAddr string)
 ```
 
-`Start` to run TCP and HTTP server, if any `addr` is empty, the server whose addr is empty will not run
-```go
-func (s *Server) Start(tcpAddr, httpAddr string)
-```
-
 #### Client Side API
 
-`TCP` call `method` with `argv` and return value into `reply` over *TCP*
+`Call` to send a `RPC` request to server and recv response
 ```go
-func (c *Client) TCP(method string, argv, reply interface{})
-```
-
-`TCPM` send multi request to server configed by `cfgs`, get result form `cfg.Reply`
-```go
-func (c *Client) TCPM(cfgs []*RequestConfig)
-```
-
-`HTTP` work like `TCP`, the difference is over *HTTP* rather than *TCP*
-```go
-func (c *Client) HTTP(method string, argv, reply interface{})
-```
-
-`HTTPM` works like `TCPM`
-```go
-func (c *Client) HTTPM(tcpAddr, httpAddr string)
+func (c *Client) Call(method string, args, reply interface{}) error
 ```
 
 `Close` `c.conn` (tcp connection)
@@ -152,5 +98,6 @@ func (c *Client) Close()
 
 ## Examples
 
-### [RPC example](examples/rpc)
-### [JSON RPC example](examples/json2)
+### [RPC gob](examples/rpc)
+### [JSON RPC](examples/json2)
+### [JSON RPC Array](examples/json2-array)

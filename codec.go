@@ -22,46 +22,36 @@ func init() {
 // for client to encode request and decode response
 // for server to encode response den decode request
 type Codec interface {
-	// generate a single Response with needed params
-	NewResponse(replyv interface{}) Response
-
-	// ErrResponse to generate a Reponse contains error
-	ErrResponse(errcode int, err error) Response
-
-	// parse encoded data into a Response
-	ReadResponse(data []byte) ([]Response, error)
-
-	// ReadResponseBody .
-	ReadResponseBody(respBody []byte, rcvr interface{}) error
-
-	// EncodeResponses .
-	EncodeResponses(v interface{}) ([]byte, error)
-
-	// generate a single NewRequest with needed params
-	NewRequest(method string, argv interface{}) Request
-
-	// parse encoded data into a Request
-	ReadRequest(data []byte) ([]Request, error)
-
-	// ReadRequestBody parse params
-	ReadRequestBody(reqBody []byte, rcvr interface{}) error
-
-	// EncodeRequests .
-	EncodeRequests(v interface{}) ([]byte, error)
+	ServerCodec
+	ClientCodec
 }
 
-// // ServerCodec .
-// // parse request and write response to client.
-// type ServerCodec interface {
-// 	ParseRequest(d []byte)
-// 	ReadRequestBody(req Request, rcvr interface{}) error
-// }
+// ServerCodec .
+// parse request and write response to client.
+type ServerCodec interface {
+	// parse encoded data into a Request
+	ReadRequest(data []byte) ([]Request, error)
+	// ReadRequestBody parse params
+	ReadRequestBody(reqBody []byte, rcvr interface{}) error
+	// generate a single Response with needed params
+	NewResponse(replyv interface{}) Response
+	// ErrResponse to generate a Reponse contains error
+	ErrResponse(errcode int, err error) Response
+	// EncodeResponses .
+	EncodeResponses(v interface{}) ([]byte, error)
+}
 
-// // ClientCodec .
-// type ClientCodec interface {
-// 	NewRequest(argv interface{}) (Request, error)
-// 	ReadResponse(d []byte, v Response) error
-// }
+// ClientCodec .
+type ClientCodec interface {
+	// generate a single NewRequest with needed params
+	NewRequest(method string, argv interface{}) Request
+	// EncodeRequests .
+	EncodeRequests(v interface{}) ([]byte, error)
+	// parse encoded data into a Response
+	ReadResponse(data []byte) ([]Response, error)
+	// ReadResponseBody .
+	ReadResponseBody(respBody []byte, rcvr interface{}) error
+}
 
 // NewGobCodec to generate a new gobCodec instance
 func NewGobCodec() Codec {

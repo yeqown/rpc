@@ -24,7 +24,7 @@ var (
 
 // NewServerWithCodec generate a server to handle all
 // tcp request from rpc client, if codec is nil will use default gobCodec
-func NewServerWithCodec(codec Codec) *Server {
+func NewServerWithCodec(codec ServerCodec) *Server {
 	if codec == nil {
 		codec = NewGobCodec()
 	}
@@ -33,8 +33,8 @@ func NewServerWithCodec(codec Codec) *Server {
 
 // Server data struct to serve RPC request over TCP and HTTP
 type Server struct {
-	m     sync.Map // map[string]*service
-	codec Codec    // codec to read request and writeResponse
+	m     sync.Map    // map[string]*service
+	codec ServerCodec // codec to read request and writeResponse
 }
 
 // Register parse register type and method
@@ -177,6 +177,7 @@ func (s *Server) call(reqs []Request) (replies []Response) {
 		} else {
 			// normal response
 			reply = s.codec.NewResponse(replyv.Interface())
+			reply.SetReqIdent(req.Ident())
 		}
 
 		replies[idx] = reply
@@ -193,48 +194,48 @@ func (s *Server) serveConn(conn net.Conn) {
 	// data, err := bufio.NewReader(conn).ReadBytes('\n')
 	rr := bufio.NewReader(conn)
 	wr := bufio.NewWriter(conn)
+
 	var (
 		precv = proto.New()
 		psend = proto.New()
 	)
 
-	if err := precv.ReadTCP(rr); err != nil {
-		DebugF("response to client connection err: %v", err)
-		// resp := s.codec.ReadResponse()(nil, nil, InternalErr)
-		// psend.Body = encodeResponse(s.codec, resp)
-		// psend.WriteTCP(wr)
-		// wr.Flush()
-		// utils.WriteServerTCP(conn, encodeResponse(s.codec, resp))
-		return
-	}
-
-	DebugF("recv a new request: %v", precv.Body)
-	reqs, err := s.codec.ReadRequest(precv.Body)
-	if err != nil {
-		DebugF("could not parse request: %v", err)
-		resp := s.codec.ErrResponse(ParseErr, err)
-		if psend.Body, err = s.codec.EncodeResponses([]Response{resp}); err != nil {
-			DebugF("could not encode responses, err=%v", err)
-			return
+	for {
+		if err := precv.ReadTCP(rr); err != nil {
+			DebugF("ReadTCP error: %v", err)
+			// continue
+			break
 		}
 
+		DebugF("recv a new request: %v", precv.Body)
+		reqs, err := s.codec.ReadRequest(precv.Body)
+		if err != nil {
+			DebugF("could not parse request: %v", err)
+			resp := s.codec.ErrResponse(ParseErr, err)
+			if psend.Body, err = s.codec.EncodeResponses([]Response{resp}); err != nil {
+				DebugF("could not encode responses, err=%v", err)
+				continue
+			}
+
+			psend.WriteTCP(wr)
+			wr.Flush()
+			// utils.WriteServerTCP(conn, encodeResponse(s.codec, resp))
+			continue
+		}
+		// DebugF("[TCP] recv a new request: %v, params: %v", req, req.Params(s.codec))
+		// DebugF("[TCP] recv a new request: %v, params: %v", req, req.Params())
+
+		resps := s.call(reqs)
+		DebugF("s.call(req) req: %v result: %v", reqs, resps)
+		// resp := s.codec.NewResponse(req, result.Reply(), result.ErrCode())
+		if psend.Body, err = s.codec.EncodeResponses(resps); err != nil {
+			DebugF("could not encode responses, err=%v", err)
+			continue
+		}
 		psend.WriteTCP(wr)
 		wr.Flush()
-		// utils.WriteServerTCP(conn, encodeResponse(s.codec, resp))
-		return
 	}
-	// DebugF("[TCP] recv a new request: %v, params: %v", req, req.Params(s.codec))
-	// DebugF("[TCP] recv a new request: %v, params: %v", req, req.Params())
-
-	resps := s.call(reqs)
-	DebugF("s.call(req) req: %v result: %v", reqs, resps)
-	// resp := s.codec.NewResponse(req, result.Reply(), result.ErrCode())
-	if psend.Body, err = s.codec.EncodeResponses(resps); err != nil {
-		DebugF("could not encode responses, err=%v", err)
-		return
-	}
-	psend.WriteTCP(wr)
-	wr.Flush()
+	// DebugF("serverConn end")
 	return
 }
 
@@ -290,14 +291,20 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	case http.MethodPost:
 		if data, err = ioutil.ReadAll(req.Body); err != nil {
 			resp := s.codec.ErrResponse(InvalidParamErr, err)
-			JSON(w, http.StatusOK, resp)
+			byts, err := s.codec.EncodeResponses(resp)
+			DebugF("s.codec.EncodeResponses err=%v", err)
+			String(w, http.StatusOK, byts)
+			// JSON(w, http.StatusOK, resp)
 			return
 		}
 		defer req.Body.Close()
 	default:
 		err := errors.New("method not allowed: " + req.Method)
 		resp := s.codec.ErrResponse(MethodNotFound, err)
-		JSON(w, http.StatusOK, resp)
+		// JSON(w, http.StatusOK, resp)
+		byts, err := s.codec.EncodeResponses(resp)
+		DebugF("s.codec.EncodeResponses err=%v", err)
+		String(w, http.StatusOK, byts)
 		return
 	}
 
@@ -305,13 +312,19 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	rpcReqs, err := s.codec.ReadRequest([]byte(data))
 	if err != nil {
 		resp := s.codec.ErrResponse(ParseErr, err)
-		JSON(w, http.StatusOK, resp)
+		// JSON(w, http.StatusOK, resp)
+		byts, err := s.codec.EncodeResponses(resp)
+		DebugF("s.codec.EncodeResponses err=%v", err)
+		String(w, http.StatusOK, byts)
 		return
 	}
 
 	resps := s.call(rpcReqs)
-	DebugF("s.call(rpcReq) result: %s", resps)
-	JSON(w, http.StatusOK, resps)
+	DebugF("s.call(rpcReq) result: %v", resps)
+	// JSON(w, http.StatusOK, resps)
+	byts, err := s.codec.EncodeResponses(resps)
+	DebugF("s.codec.EncodeResponses err=%v", err)
+	String(w, http.StatusOK, byts)
 	return
 }
 

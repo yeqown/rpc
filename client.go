@@ -17,31 +17,32 @@ var (
 )
 
 // NewClientWithCodec generate a Client
-// prototype rpc.NewClientWithCodec(codec Codec, tcpAddr string, httpAddr string)
+// prototype rpc.NewClientWithCodec(codec Codec, tcpAddr string)
 // if codec is nil will use default gobCodec, tcpAddr or httpAddr is empty only when
 // you are sure about it will never be used, otherwise it panic while using some functions.
-func NewClientWithCodec(codec Codec, tcpAddr, httpAddr string) *Client {
+func NewClientWithCodec(codec ClientCodec, tcpAddr string) *Client {
 	if codec == nil {
 		codec = NewGobCodec()
 	}
 
 	return &Client{
-		tcpAddr:  tcpAddr,
-		httpAddr: httpAddr,
-		codec:    codec,
+		tcpAddr: tcpAddr,
+		// httpAddr: httpAddr,
+		codec: codec,
 	}
 }
 
 // Client as a data struct to connect to server, send and recv data
+// TODO: support jsonrpc multi
 type Client struct {
 	// rpc server addr over tcp
 	tcpAddr string
 
 	// rpc server addr over http
-	httpAddr string
+	// httpAddr string
 
 	// codec to manage about the request and response encoding and decoding
-	codec Codec
+	codec ClientCodec
 
 	// connection to the tcp server
 	tcpConn net.Conn
@@ -49,6 +50,7 @@ type Client struct {
 
 // Call .
 func (c *Client) Call(method string, args, reply interface{}) error {
+	DebugF("a new call ")
 	req := c.codec.NewRequest(method, args)
 	resps := make([]Response, 0)
 	if err := c.calltcp([]Request{req}, &resps); err != nil {
@@ -58,14 +60,12 @@ func (c *Client) Call(method string, args, reply interface{}) error {
 
 	resp := resps[0]
 	// DebugF("len(resps)=%d, stdResponse=%v", len(resps), resps[0].(*stdResponse))
-	DebugF("resp.Reply()=%s", resp.Reply())
-	// TODO: handle reponse error
-	// TODO: handle resp maybe nil
+	DebugF("len(resps)=%d, resp.Reply()=%s", len(resps), resp.Reply())
 	if err := c.codec.ReadResponseBody(resp.Reply(), reply); err != nil {
 		DebugF("could not ReadReponseBody err=%v", err)
 		return err
 	}
-
+	DebugF("call done")
 	return nil
 }
 
