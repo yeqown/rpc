@@ -1,11 +1,13 @@
 package rpc
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
 	"net"
 
-	"github.com/yeqown/rpc/utils"
+	"github.com/yeqown/rpc/proto"
+	// "github.com/yeqown/rpc/utils"
 )
 
 var (
@@ -15,175 +17,96 @@ var (
 )
 
 // NewClientWithCodec generate a Client
-// prototype rpc.NewClientWithCodec(codec Codec, tcpAddr string, httpAddr string)
+// prototype rpc.NewClientWithCodec(codec Codec, tcpAddr string)
 // if codec is nil will use default gobCodec, tcpAddr or httpAddr is empty only when
 // you are sure about it will never be used, otherwise it panic while using some functions.
-func NewClientWithCodec(codec Codec, tcpAddr, httpAddr string) *Client {
+func NewClientWithCodec(codec ClientCodec, tcpAddr string) *Client {
 	if codec == nil {
 		codec = NewGobCodec()
 	}
 
 	return &Client{
-		tcpAddr:  tcpAddr,
-		httpAddr: httpAddr,
-		codec:    codec,
+		tcpAddr: tcpAddr,
+		// httpAddr: httpAddr,
+		codec: codec,
 	}
 }
 
 // Client as a data struct to connect to server, send and recv data
+// TODO: support jsonrpc multi
 type Client struct {
 	// rpc server addr over tcp
 	tcpAddr string
 
 	// rpc server addr over http
-	httpAddr string
+	// httpAddr string
 
 	// codec to manage about the request and response encoding and decoding
-	codec Codec
+	codec ClientCodec
 
 	// connection to the tcp server
 	tcpConn net.Conn
 }
 
-// CallOverTCP call server over tcp
+// Call .
+func (c *Client) Call(method string, args, reply interface{}) error {
+	DebugF("a new call ")
+	req := c.codec.NewRequest(method, args)
+	resps := make([]Response, 0)
+	if err := c.calltcp([]Request{req}, &resps); err != nil {
+		DebugF("could not calltcp err=%v", err)
+		return err
+	}
+
+	resp := resps[0]
+	// DebugF("len(resps)=%d, stdResponse=%v", len(resps), resps[0].(*stdResponse))
+	DebugF("len(resps)=%d, resp.Reply()=%s", len(resps), resp.Reply())
+	if err := c.codec.ReadResponseBody(resp.Reply(), reply); err != nil {
+		DebugF("could not ReadReponseBody err=%v", err)
+		return err
+	}
+	DebugF("call done")
+	return nil
+}
+
+// Call server over tcp
 // TODO: timeout cancel
-func (c *Client) CallOverTCP(method string, args, reply interface{}) error {
-	if err := c.validSelf(); err != nil {
+func (c *Client) calltcp(reqs []Request, resps *[]Response) (err error) {
+	if err = c.valid(); err != nil {
 		return err
 	}
 
-	// core ....
-	req := c.codec.Request(method, args)
-	tcpRespByts, err := utils.WriteClientTCP(c.tcpConn, encodeRequest(c.codec, req))
+	var (
+		wr    = bufio.NewWriter(c.tcpConn)
+		rr    = bufio.NewReader(c.tcpConn)
+		psend = proto.New()
+		precv = proto.New()
+	)
+
+	// req := c.codec.NewRequest(method, args)
+	if psend.Body, err = c.codec.EncodeRequests(&reqs); err != nil {
+		DebugF("could not EncodeRequests, err=%v", err)
+		return err
+	}
+
+	if err := psend.WriteTCP(wr); err != nil {
+		DebugF("could not WriteTCP, err=%v", err)
+		return err
+	}
+	wr.Flush()
+
+	// recv from TCP response
+	if err := precv.ReadTCP(rr); err != nil {
+		DebugF("could not ReadTCP, err=%v", err)
+		return err
+	}
+
+	DebugF("recv response body: %s", precv.Body)
+	// var resp Response
+	*resps, err = c.codec.ReadResponse(precv.Body)
 	if err != nil {
-		return fmt.Errorf("c.codec.Request(c.conn, req) got err: %v", err)
-	}
-
-	var resp Response
-	if resp, err = c.codec.ParseResponse(tcpRespByts); err != nil {
+		DebugF("could not ReadResponses, err=%v", err)
 		return err
-	}
-	if err := resp.Error(); err != nil {
-		return fmt.Errorf("resp.Error(): %v", err)
-	}
-	// core ...
-
-	if err := c.codec.Decode(resp.Reply(c.codec), reply); err != nil {
-		return fmt.Errorf("c.codec.Decode(resp.Reply() got err: %v", err)
-	}
-	return nil
-}
-
-// CallOverTCPMulti ...
-func (c *Client) CallOverTCPMulti(rpcReqs []*RequestConfig) error {
-	if err := c.validSelf(); err != nil {
-		return err
-	}
-	if !c.codec.MultiSupported() {
-		return errNotSupportMulti
-	}
-
-	// assemble multi Request into a Request
-	reqMulti := c.codec.RequestMulti(rpcReqs)
-	data := encodeRequest(c.codec, reqMulti)
-	debugF("CallOverTCPMulti encodeRequest(c.codec, reqMulti): %s", data)
-	tcpRespByts, err := utils.WriteClientTCP(c.tcpConn, data)
-	if err != nil {
-		return fmt.Errorf("c.codec.Request(c.conn, req) got err: %v", err)
-	}
-
-	var resp Response
-	if resp, err = c.codec.ParseResponse(tcpRespByts); err != nil {
-		return err
-	}
-	debugF("CallOverTCPMulti: origin %s, decoded: %v", tcpRespByts, resp)
-
-	counter := 0
-	for resp.HasNext() {
-		next := resp.Next().(Response)
-		debugF("client get response: %v, %s", next, next.Reply(c.codec))
-		if err := c.codec.Decode(next.Reply(c.codec), rpcReqs[counter].Reply); err != nil {
-			return fmt.Errorf("c.codec.Decode(resp.Reply() got err: %v", err)
-		}
-		counter++
-	}
-	debugF("CallOverTCPMulti result: %v", rpcReqs)
-	return nil
-}
-
-// CallOverHTTP generate a http request and send to the server
-func (c *Client) CallOverHTTP(method string, args, reply interface{}) error {
-	if err := c.validSelf(); err != nil {
-		return err
-	}
-
-	// assemble the request and encode the request to []byte
-	rpcReq := c.codec.Request(method, args)
-	reqEncoded, err := c.codec.Encode(rpcReq)
-	if err != nil {
-		return fmt.Errorf("c.codec.Encode(rpcReq) got err: %v", err)
-	}
-
-	debugF("send request [addr: %s] [reqEncoded: %s]", c.httpAddr, reqEncoded)
-	// request the server
-	httpRespByts, err := utils.RequestHTTP(c.httpAddr, reqEncoded)
-	if err != nil {
-		return fmt.Errorf("c.codec.Encode(rpcReq) got err: %v", err)
-	}
-	debugF("got response %s\n", httpRespByts)
-
-	var rpcResp Response
-	if rpcResp, err = c.codec.ParseResponse(httpRespByts); err != nil {
-		return err
-	}
-	if err := rpcResp.Error(); err != nil {
-		return fmt.Errorf("rpcResp.Error(): %v", err)
-	}
-	debugF("client decode to reply: origin %s, decoded: %v", rpcResp.Reply(c.codec), reply)
-	if err := c.codec.Decode(rpcResp.Reply(c.codec), reply); err != nil {
-		return fmt.Errorf("c.codec.Decode(rpcResp.Reply() got err: %v", err)
-	}
-	return nil
-}
-
-// CallOverHTTPMulti ...
-func (c *Client) CallOverHTTPMulti(rpcReqs []*RequestConfig) error {
-	if err := c.validSelf(); err != nil {
-		return err
-	}
-
-	if !c.codec.MultiSupported() {
-		return errNotSupportMulti
-	}
-
-	// assemble multi Request into a Request
-	reqMulti := c.codec.RequestMulti(rpcReqs)
-	reqEncoded, err := c.codec.Encode(reqMulti)
-	if err != nil {
-		return fmt.Errorf("c.codec.Encode(reqMulti) got err: %v", err)
-	}
-
-	debugF("send request [addr: %s] [reqEncoded: %s]", c.httpAddr, reqEncoded)
-	// request the server
-	httpRespByts, err := utils.RequestHTTP(c.httpAddr, reqEncoded)
-	if err != nil {
-		return fmt.Errorf("c.codec.Encode(rpcReq) got err: %v", err)
-	}
-	debugF("got response %s\n", httpRespByts)
-
-	var rpcResp Response
-	if rpcResp, err = c.codec.ParseResponse(httpRespByts); err != nil {
-		return err
-	}
-
-	counter := 0
-	for rpcResp.HasNext() {
-		next := rpcResp.Next().(Response)
-		debugF("client decode to reply: origin %s, decoded: %v", rpcResp.Reply(c.codec), rpcReqs[counter].Reply)
-		if err := c.codec.Decode(next.Reply(c.codec), rpcReqs[counter].Reply); err != nil {
-			return fmt.Errorf("c.codec.Decode(v.Reply(), v) got err: %v", err)
-		}
-		counter++
 	}
 
 	return nil
@@ -197,7 +120,7 @@ func (c *Client) Close() {
 	c.tcpConn.Close()
 }
 
-func (c *Client) validSelf() error {
+func (c *Client) valid() error {
 	if c.codec == nil {
 		return errEmptyCodec
 	}
@@ -211,13 +134,4 @@ func (c *Client) validSelf() error {
 		c.tcpConn = conn
 	}
 	return nil
-}
-
-// encodeRequest ...
-func encodeRequest(codec Codec, req Request) []byte {
-	byts, err := codec.Encode(req)
-	if err != nil {
-		panic(err)
-	}
-	return byts
 }

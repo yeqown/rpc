@@ -2,9 +2,10 @@ package main
 
 import (
 	"github.com/yeqown/rpc"
-	"github.com/yeqown/rpc/json2"
+	"github.com/yeqown/rpc/jsonrpc"
 )
 
+// Int .
 type Int struct{}
 
 // Args ... for Sum Method
@@ -13,6 +14,7 @@ type Args struct {
 	B int `json:"b"`
 }
 
+// Result .
 type Result struct {
 	Sum int `json:"sum"`
 }
@@ -30,8 +32,9 @@ func (i *Int) Sum(args *Args, reply *Result) error {
 }
 
 func main() {
-	srv := rpc.NewServerWithCodec(json2.NewJSONCodec())
+	srv := rpc.NewServerWithCodec(jsonrpc.NewJSONCodec())
 	// srv := rpc.NewServerWithCodec(json2.NewStdJSONCodec())
 	srv.Register(new(Int))
-	srv.Start("127.0.0.1:9998", "127.0.0.1:9999")
+	go srv.ServeTCP("127.0.0.1:9998")
+	srv.ListenAndServe("127.0.0.1:9999")
 }

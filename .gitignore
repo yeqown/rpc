@@ -102,3 +102,8 @@ ENV/
 
 # Mac
 .DS_Store
+benchmark/
+
+# pprof
+rpc.test
+profile*.png
