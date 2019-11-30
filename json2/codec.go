@@ -59,7 +59,7 @@ func (j *jsonCodec) Decode(data []byte, out interface{}) error {
 	)
 	// TOFIX: cannot use base64.StdEncoding.Decode
 	if base64Dst, err = base64.StdEncoding.DecodeString(string(data)); err != nil {
-		return fmt.Errorf("base64.StdEncoding.Decode(base64Dst, data) got err: %v", err)
+		return fmt.Errorf("base64.StdEncoding.DecodeString('%s') got err: %v", string(data), err)
 	}
 	// println(string(data), len(data), string(base64Dst), len(base64Dst), base64Dst)
 	// log.Printf("%v, base64.StdEncoding.DecodedLen(len(data)): %d\n", base64Dst, base64.StdEncoding.DecodedLen(len(data)))
