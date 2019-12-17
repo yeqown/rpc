@@ -2,9 +2,11 @@ package rpc
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"net"
+	"time"
 
 	"github.com/yeqown/rpc/proto"
 	// "github.com/yeqown/rpc/utils"
@@ -14,6 +16,7 @@ var (
 	errMultiReplyTypePtr = errors.New("multi reply should be arrry or slice pointer")
 	errEmptyCodec        = errors.New("client has an empty codec")
 	errNotSupportMulti   = errors.New("current codec not support multi request")
+	errCtxTimeout        = errors.New("timeout")
 )
 
 // NewClientWithCodec generate a Client
@@ -33,7 +36,7 @@ func NewClientWithCodec(codec ClientCodec, tcpAddr string) *Client {
 }
 
 // Client as a data struct to connect to server, send and recv data
-// TODO: support jsonrpc multi
+// TODO: finish multi request support
 type Client struct {
 	// rpc server addr over tcp
 	tcpAddr string
@@ -59,7 +62,6 @@ func (c *Client) Call(method string, args, reply interface{}) error {
 	}
 
 	resp := resps[0]
-	// DebugF("len(resps)=%d, stdResponse=%v", len(resps), resps[0].(*stdResponse))
 	DebugF("len(resps)=%d, resp.Reply()=%s", len(resps), resp.Reply())
 	if err := c.codec.ReadResponseBody(resp.Reply(), reply); err != nil {
 		DebugF("could not ReadReponseBody err=%v", err)
@@ -70,7 +72,6 @@ func (c *Client) Call(method string, args, reply interface{}) error {
 }
 
 // Call server over tcp
-// TODO: timeout cancel
 func (c *Client) calltcp(reqs []Request, resps *[]Response) (err error) {
 	if err = c.valid(); err != nil {
 		return err
@@ -83,30 +84,38 @@ func (c *Client) calltcp(reqs []Request, resps *[]Response) (err error) {
 		precv = proto.New()
 	)
 
-	// req := c.codec.NewRequest(method, args)
-	if psend.Body, err = c.codec.EncodeRequests(&reqs); err != nil {
-		DebugF("could not EncodeRequests, err=%v", err)
-		return err
-	}
+	timeoutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 
-	if err := psend.WriteTCP(wr); err != nil {
-		DebugF("could not WriteTCP, err=%v", err)
-		return err
-	}
-	wr.Flush()
+	select {
+	case <-timeoutCtx.Done():
+		return errCtxTimeout
+	default:
+		// req := c.codec.NewRequest(method, args)
+		if psend.Body, err = c.codec.EncodeRequests(&reqs); err != nil {
+			DebugF("could not EncodeRequests, err=%v", err)
+			return err
+		}
 
-	// recv from TCP response
-	if err := precv.ReadTCP(rr); err != nil {
-		DebugF("could not ReadTCP, err=%v", err)
-		return err
-	}
+		if err := psend.WriteTCP(wr); err != nil {
+			DebugF("could not WriteTCP, err=%v", err)
+			return err
+		}
+		wr.Flush()
 
-	DebugF("recv response body: %s", precv.Body)
-	// var resp Response
-	*resps, err = c.codec.ReadResponse(precv.Body)
-	if err != nil {
-		DebugF("could not ReadResponses, err=%v", err)
-		return err
+		// recv from TCP response
+		if err := precv.ReadTCP(rr); err != nil {
+			DebugF("could not ReadTCP, err=%v", err)
+			return err
+		}
+
+		DebugF("recv response body: %s", precv.Body)
+		// var resp Response
+		*resps, err = c.codec.ReadResponse(precv.Body)
+		if err != nil {
+			DebugF("could not ReadResponses, err=%v", err)
+			return err
+		}
 	}
 
 	return nil
@@ -117,7 +126,9 @@ func (c *Client) Close() {
 	if c.tcpConn == nil {
 		return
 	}
-	c.tcpConn.Close()
+	if err := c.tcpConn.Close(); err != nil {
+		DebugF("could not close c.tcpConn, err=%v", err)
+	}
 }
 
 func (c *Client) valid() error {

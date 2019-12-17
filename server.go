@@ -198,12 +198,13 @@ func (s *Server) serveConn(conn net.Conn) {
 	var (
 		precv = proto.New()
 		psend = proto.New()
+		resps = make([]Response, 0)
 	)
 
 	for {
 		if err := precv.ReadTCP(rr); err != nil {
+			// true: tcp closed
 			DebugF("ReadTCP error: %v", err)
-			// continue
 			break
 		}
 
@@ -211,23 +212,12 @@ func (s *Server) serveConn(conn net.Conn) {
 		reqs, err := s.codec.ReadRequest(precv.Body)
 		if err != nil {
 			DebugF("could not parse request: %v", err)
-			resp := s.codec.ErrResponse(ParseErr, err)
-			if psend.Body, err = s.codec.EncodeResponses([]Response{resp}); err != nil {
-				DebugF("could not encode responses, err=%v", err)
-				continue
-			}
-
-			psend.WriteTCP(wr)
-			wr.Flush()
-			// utils.WriteServerTCP(conn, encodeResponse(s.codec, resp))
-			continue
+			resps = append(resps, s.codec.ErrResponse(ParseErr, err))
+			goto wr
 		}
-		// DebugF("[TCP] recv a new request: %v, params: %v", req, req.Params(s.codec))
-		// DebugF("[TCP] recv a new request: %v, params: %v", req, req.Params())
-
-		resps := s.call(reqs)
+		resps = s.call(reqs)
 		DebugF("s.call(req) req: %v result: %v", reqs, resps)
-		// resp := s.codec.NewResponse(req, result.Reply(), result.ErrCode())
+	wr:
 		if psend.Body, err = s.codec.EncodeResponses(resps); err != nil {
 			DebugF("could not encode responses, err=%v", err)
 			continue
@@ -235,8 +225,6 @@ func (s *Server) serveConn(conn net.Conn) {
 		psend.WriteTCP(wr)
 		wr.Flush()
 	}
-	// DebugF("serverConn end")
-	return
 }
 
 // ServeTCP Dealing with request
