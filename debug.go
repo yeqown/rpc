@@ -7,7 +7,7 @@ import (
 )
 
 var (
-	isDebug = false
+	isDebug = true
 	h       hash.Hash
 )
 
@@ -15,7 +15,8 @@ func init() {
 	h = md5.New()
 }
 
-func debugF(format string, argvs ...interface{}) {
+// DebugF .
+func DebugF(format string, argvs ...interface{}) {
 	if !isDebug {
 		return
 	}
