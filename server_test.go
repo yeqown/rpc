@@ -19,7 +19,7 @@ func (i *Int) Sum(args *Args, reply *int) error {
 }
 
 func TestServer_call(t *testing.T) {
-	codec := NewGobCodec()
+	codec := NewGobCodec().(*gobCodec)
 	s := NewServerWithCodec(codec)
 	s.Register(new(Int))
 
@@ -35,20 +35,22 @@ func TestServer_call(t *testing.T) {
 	tests := []struct {
 		name string
 		args args
-		want Response
+		want []Response
 	}{
 		{
 			name: "case 0",
 			args: args{
-				req: &defaultRequest{Mthd: "Int.Sum", Args: argv},
+				req: &stdRequest{Mthd: "Int.Sum", Args: argv},
 			},
-			want: &defaultResponse{Err: "", Rply: replyv},
+			want: []Response{
+				&stdResponse{Err: "", Rply: replyv},
+			},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := s.call(tt.args.req); !reflect.DeepEqual(got, tt.want) {
-				debugF("got err: %v", got.Error())
+			if got := s.call([]Request{tt.args.req}); !reflect.DeepEqual(got, tt.want) {
+				DebugF("got err: %v\n", got[0].Error())
 				t.Errorf("Server.call() = %v, want %v", got, tt.want)
 			}
 		})
