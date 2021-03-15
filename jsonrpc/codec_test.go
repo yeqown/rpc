@@ -78,3 +78,23 @@ func Test_jsonCodecResponse(t *testing.T) {
 		t.FailNow()
 	}
 }
+
+// https://github.com/yeqown/rpc/issues/5
+func Test_jsonCodec_Issues(t *testing.T) {
+	codec := NewJSONCodec().(*jsonCodec)
+
+	m := map[string]interface{}{}
+	dataWrong := `{"a": 1,}`
+	err1 := codec.decode([]byte(dataWrong), &m)
+	t.Logf("err1: %v", err1)
+	if err1 == nil {
+		t.Fatalf("err1 should not be nil")
+	}
+
+	dataCorrect := `{"a": 1}`
+	err2 := codec.decode([]byte(dataCorrect), &m)
+	t.Logf("err2: %v", err2)
+	if err2 != nil {
+		t.Fatalf("err2 should be nil")
+	}
+}
